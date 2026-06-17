@@ -1,0 +1,36 @@
+{
+  "name": "pulse",
+  "version": "0.1.0",
+  "private": true,
+  "packageManager": "yarn@1.22.22",
+  "type": "module",
+  "bin": {
+    "pulse": "dist/main.js"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "start": "node dist/main.js",
+    "start:dev": "tsx src/main.ts",
+    "prepare": "lefthook install || true",
+    "format": "prettier \"{src,test}/**/*.ts\" --write",
+    "lint": "eslint \"{src,test}/**/*.ts\" --fix",
+    "type-check": "tsc --noEmit -p tsconfig.json"
+  },
+  "dependencies": {
+    "cac": "^6.7.14"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.29.0",
+    "@tsconfig/strictest": "^2.0.8",
+    "@types/node": "^24.0.4",
+    "eslint": "^9.29.0",
+    "eslint-config-prettier": "^10.1.5",
+    "eslint-plugin-import": "^2.31.0",
+    "eslint-plugin-prettier": "^5.5.0",
+    "lefthook": "^2.1.9",
+    "prettier": "^3.5.3",
+    "tsx": "^4.20.1",
+    "typescript": "^5.8.3",
+    "typescript-eslint": "^8.34.0"
+  }
+}

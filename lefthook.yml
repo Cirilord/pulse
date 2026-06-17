@@ -1,0 +1,19 @@
+pre-commit:
+  commands:
+    format:
+      glob: '**/*.{js,jsx,ts,tsx,json,css,scss,md}'
+      env:
+        DOTENV_CONFIG_PATH: .env
+      run: ./node_modules/.bin/prettier --write {staged_files}
+      stage_fixed: true
+    lint:
+      glob: '{src,test}/**/*.{js,jsx,ts,tsx}'
+      env:
+        DOTENV_CONFIG_PATH: .env
+      run: ./node_modules/.bin/eslint --fix {staged_files}
+      stage_fixed: true
+    type-check:
+      glob: '{src,test}/**/*.{ts,tsx}'
+      env:
+        DOTENV_CONFIG_PATH: .env
+      run: ./node_modules/.bin/tsc --noEmit -p tsconfig.json
