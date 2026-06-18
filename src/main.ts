@@ -4,6 +4,7 @@ import { cac } from 'cac';
 import { readFile } from 'node:fs/promises';
 
 import { Lexer } from './lexer/lexer.js';
+import { Parser } from './parser/parser.js';
 
 const cli = cac('pulse');
 
@@ -12,9 +13,11 @@ cli.command('compile <input>', 'Compile a Pulse source file').action(async funct
 ): Promise<void> {
   const sourceCode: string = await readFile(input, 'utf8');
   const lexer: Lexer = new Lexer(sourceCode);
-
   const tokens = lexer.tokenize();
-  console.log(tokens);
+  const parser: Parser = new Parser(tokens);
+  const program = parser.parseProgram();
+
+  console.log(program);
 });
 
 cli.help();
