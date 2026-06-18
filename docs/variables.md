@@ -8,7 +8,7 @@ Pulse uses explicit static typing with no type inference.
 - `val` declares an immutable value
 - All variable declarations must include an explicit type
 - `val` declarations must always include an initializer
-- `var` declarations can be reassigned with `=`, `+=`, `-=`, `*=`, `/=`, and `%=` when the types are compatible
+- `var` declarations can be reassigned with `=`, `+=`, `-=`, `*=`, `/=`, `%=` and the supported compound operators when the types are compatible
 - To start with `null`, the declared type must be nullable
 - Nullable types use the `?` suffix
 - `null` is an explicit keyword and literal
@@ -44,6 +44,7 @@ val alias = null;
 - Numeric variables can be used in arithmetic expressions with `+`, `-`, `*`, `/`, and `%`
 - Comparison operators `==`, `!=`, `<`, `<=`, `>`, and `>=` are available
 - Null coalescing with `??` is available for nullable values and `null` literals
+- Compound assignments `&&=`, `||=`, and `??=` are available for compatible boolean and nullable variables
 - Bitwise operators `&`, `|`, `^`, `<<`, `>>`, and `~` are available for `int` and `byte`
 - Logical operators `&&`, `||`, and `!` are available for boolean expressions
 - Unary `+` and unary `-` are available for numeric expressions

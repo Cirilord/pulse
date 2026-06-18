@@ -7,7 +7,7 @@ import { TokenType } from '../src/lexer/token-type.js';
 import { Parser } from '../src/parser/parser.js';
 
 describe('operators example', function describeOperatorsExample(): void {
-  test('tokenizes examples/operators.p with comparison, logical, and unary operators', async function testLexerOutput(): Promise<void> {
+  test('tokenizes examples/operators.p with comparison, logical, unary, and compound operators', async function testLexerOutput(): Promise<void> {
     const sourceCode: string = await readFile(new URL('./operators.p', import.meta.url), 'utf8');
     const lexer: Lexer = new Lexer(sourceCode);
     const tokens = lexer.tokenize().map(function toTokenShape(token): { lexeme: string; type: TokenType } {
@@ -27,6 +27,9 @@ describe('operators example', function describeOperatorsExample(): void {
     expect(tokens).toContainEqual({ lexeme: '||', type: TokenType.PipePipe });
     expect(tokens).toContainEqual({ lexeme: '!', type: TokenType.Bang });
     expect(tokens).toContainEqual({ lexeme: '??', type: TokenType.QuestionMarkQuestionMark });
+    expect(tokens).toContainEqual({ lexeme: '&&=', type: TokenType.AmpersandAmpersandEqual });
+    expect(tokens).toContainEqual({ lexeme: '||=', type: TokenType.PipePipeEqual });
+    expect(tokens).toContainEqual({ lexeme: '??=', type: TokenType.QuestionMarkQuestionMarkEqual });
   });
 
   test('parses comparison, logical, and unary expressions', async function testParserOutput(): Promise<void> {
@@ -57,6 +60,30 @@ describe('operators example', function describeOperatorsExample(): void {
     });
 
     expect(program.body[12]).toMatchObject({
+      expression: {
+        kind: 'AssignmentExpression',
+        operator: '||=',
+      },
+      kind: 'ExpressionStatement',
+    });
+
+    expect(program.body[13]).toMatchObject({
+      expression: {
+        kind: 'AssignmentExpression',
+        operator: '&&=',
+      },
+      kind: 'ExpressionStatement',
+    });
+
+    expect(program.body[15]).toMatchObject({
+      expression: {
+        kind: 'AssignmentExpression',
+        operator: '??=',
+      },
+      kind: 'ExpressionStatement',
+    });
+
+    expect(program.body[16]).toMatchObject({
       initializer: {
         kind: 'BinaryExpression',
         operator: '??',
@@ -115,6 +142,28 @@ describe('operators example', function describeOperatorsExample(): void {
     const checker: Checker = new Checker();
 
     expect(function checkInvalidNullCoalescingTypesProgram(): void {
+      checker.checkProgram(parser.parseProgram());
+    }).toThrow(CheckerError);
+  });
+
+  test('rejects logical compound assignment on non-boolean variables', function testInvalidLogicalCompoundAssignment(): void {
+    const sourceCode = 'var count: int = 1; count ||= 2;';
+    const lexer: Lexer = new Lexer(sourceCode);
+    const parser: Parser = new Parser(lexer.tokenize());
+    const checker: Checker = new Checker();
+
+    expect(function checkInvalidLogicalCompoundAssignmentProgram(): void {
+      checker.checkProgram(parser.parseProgram());
+    }).toThrow(CheckerError);
+  });
+
+  test('rejects null coalescing assignment on non-nullable variables', function testInvalidNullCoalescingAssignment(): void {
+    const sourceCode = 'var name: string = "Pulse"; name ??= "guest";';
+    const lexer: Lexer = new Lexer(sourceCode);
+    const parser: Parser = new Parser(lexer.tokenize());
+    const checker: Checker = new Checker();
+
+    expect(function checkInvalidNullCoalescingAssignmentProgram(): void {
       checker.checkProgram(parser.parseProgram());
     }).toThrow(CheckerError);
   });

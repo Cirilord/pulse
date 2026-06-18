@@ -1,6 +1,7 @@
 export enum TokenType {
   Ampersand = 'Ampersand',
   AmpersandAmpersand = 'AmpersandAmpersand',
+  AmpersandAmpersandEqual = 'AmpersandAmpersandEqual',
   AmpersandEqual = 'AmpersandEqual',
   Caret = 'Caret',
   CaretEqual = 'CaretEqual',
@@ -30,8 +31,10 @@ export enum TokenType {
   Plus = 'Plus',
   PlusEqual = 'PlusEqual',
   PipePipe = 'PipePipe',
+  PipePipeEqual = 'PipePipeEqual',
   QuestionMark = 'QuestionMark',
   QuestionMarkQuestionMark = 'QuestionMarkQuestionMark',
+  QuestionMarkQuestionMarkEqual = 'QuestionMarkQuestionMarkEqual',
   RightBrace = 'RightBrace',
   RightParen = 'RightParen',
   RightShift = 'RightShift',

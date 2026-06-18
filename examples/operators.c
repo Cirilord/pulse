@@ -25,7 +25,11 @@ int main(void) {
   const bool unaryNot = (!false);
   const int unaryMinus = ((-5) + 2);
   const int unaryPlus = (+5);
+  bool enabled = false;
+  enabled = (enabled || true);
+  enabled = (enabled && false);
   string_t_nullable alias = (string_t_nullable){ .is_null = true, .value = (string_t){ .length = 0, .data = NULL } };
+  alias = (alias.is_null ? (string_t_nullable){ .is_null = false, .value = STRING_LITERAL("guest") } : alias);
   const string_t fallbackAlias = (alias.is_null ? STRING_LITERAL("guest") : alias.value);
   return 0;
 }

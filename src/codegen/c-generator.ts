@@ -98,6 +98,14 @@ export class CGenerator {
   private generateExpression(expression: ExpressionNode): string {
     switch (expression.kind) {
       case 'AssignmentExpression':
+        if (expression.operator === '&&=' || expression.operator === '||=') {
+          return this.generateLogicalAssignmentExpression(expression);
+        }
+
+        if (expression.operator === '??=') {
+          return this.generateNullCoalescingAssignmentExpression(expression);
+        }
+
         return `${expression.target.name} ${expression.operator} ${this.generateAssignedValue(
           this.resolveVariableType(expression.target.name),
           expression.value
@@ -131,6 +139,13 @@ export class CGenerator {
     return `${this.generateExpression(statement.expression)};`;
   }
 
+  private generateLogicalAssignmentExpression(expression: ExpressionNode & { kind: 'AssignmentExpression' }): string {
+    const operator: string = expression.operator === '&&=' ? '&&' : '||';
+    const valueExpression: string = this.generateExpression(expression.value);
+
+    return `${expression.target.name} = (${expression.target.name} ${operator} ${valueExpression})`;
+  }
+
   private generateNonNullableValue(typeName: string, expression: ExpressionNode): string {
     if (typeName === 'string' && expression.kind === 'StringLiteral') {
       return `STRING_LITERAL(${this.generateExpression(expression)})`;
@@ -145,6 +160,20 @@ export class CGenerator {
     }
 
     return this.generateExpression(expression);
+  }
+
+  private generateNullCoalescingAssignmentExpression(
+    expression: ExpressionNode & { kind: 'AssignmentExpression' }
+  ): string {
+    const targetType: TypeNode = this.resolveVariableType(expression.target.name);
+
+    if (targetType.kind !== 'NullableType') {
+      throw new CGeneratorError('Null coalescing assignment requires a nullable target.', expression.location);
+    }
+
+    const assignedValue: string = this.generateAssignedValue(targetType, expression.value);
+
+    return `${expression.target.name} = (${expression.target.name}.is_null ? ${assignedValue} : ${expression.target.name})`;
   }
 
   private generateNullCoalescingExpression(expression: BinaryExpressionNode): string {

@@ -1,6 +1,20 @@
 import type { BaseNode } from './base-node.js';
 
-export type AssignmentOperator = '=' | '&=' | '<<=' | '>>=' | '^=' | '|=' | '+=' | '-=' | '*=' | '/=' | '%=';
+export type AssignmentOperator =
+  | '='
+  | '&&='
+  | '&='
+  | '<<='
+  | '||='
+  | '??='
+  | '>>='
+  | '^='
+  | '|='
+  | '+='
+  | '-='
+  | '*='
+  | '/='
+  | '%=';
 
 export type AssignmentExpressionNode = BaseNode & {
   kind: 'AssignmentExpression';

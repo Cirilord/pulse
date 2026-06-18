@@ -62,15 +62,22 @@ export class Lexer {
 
       switch (character) {
         case '&':
-          if (this.peek() === '=') {
+          if (this.peek() === '&') {
             this.advance();
-            tokens.push(this.createToken(TokenType.AmpersandEqual, startIndex, startLine, startColumn));
+
+            if (this.peek() === '=') {
+              this.advance();
+              tokens.push(this.createToken(TokenType.AmpersandAmpersandEqual, startIndex, startLine, startColumn));
+              break;
+            }
+
+            tokens.push(this.createToken(TokenType.AmpersandAmpersand, startIndex, startLine, startColumn));
             break;
           }
 
-          if (this.peek() === '&') {
+          if (this.peek() === '=') {
             this.advance();
-            tokens.push(this.createToken(TokenType.AmpersandAmpersand, startIndex, startLine, startColumn));
+            tokens.push(this.createToken(TokenType.AmpersandEqual, startIndex, startLine, startColumn));
             break;
           }
 
@@ -183,6 +190,15 @@ export class Lexer {
         case '?':
           if (this.peek() === '?') {
             this.advance();
+
+            if (this.peek() === '=') {
+              this.advance();
+              tokens.push(
+                this.createToken(TokenType.QuestionMarkQuestionMarkEqual, startIndex, startLine, startColumn)
+              );
+              break;
+            }
+
             tokens.push(this.createToken(TokenType.QuestionMarkQuestionMark, startIndex, startLine, startColumn));
             break;
           }
@@ -190,15 +206,22 @@ export class Lexer {
           tokens.push(this.createToken(TokenType.QuestionMark, startIndex, startLine, startColumn));
           break;
         case '|':
-          if (this.peek() === '=') {
+          if (this.peek() === '|') {
             this.advance();
-            tokens.push(this.createToken(TokenType.PipeEqual, startIndex, startLine, startColumn));
+
+            if (this.peek() === '=') {
+              this.advance();
+              tokens.push(this.createToken(TokenType.PipePipeEqual, startIndex, startLine, startColumn));
+              break;
+            }
+
+            tokens.push(this.createToken(TokenType.PipePipe, startIndex, startLine, startColumn));
             break;
           }
 
-          if (this.peek() === '|') {
+          if (this.peek() === '=') {
             this.advance();
-            tokens.push(this.createToken(TokenType.PipePipe, startIndex, startLine, startColumn));
+            tokens.push(this.createToken(TokenType.PipeEqual, startIndex, startLine, startColumn));
             break;
           }
 

@@ -155,13 +155,16 @@ export class Parser {
 
     if (
       !this.match(
+        TokenType.AmpersandAmpersandEqual,
         TokenType.AmpersandEqual,
         TokenType.CaretEqual,
         TokenType.Equal,
         TokenType.LeftShiftEqual,
         TokenType.PlusEqual,
         TokenType.PipeEqual,
+        TokenType.PipePipeEqual,
         TokenType.MinusEqual,
+        TokenType.QuestionMarkQuestionMarkEqual,
         TokenType.RightShiftEqual,
         TokenType.StarEqual,
         TokenType.SlashEqual,
@@ -192,6 +195,8 @@ export class Parser {
 
   private parseAssignmentOperator(token: Token): AssignmentOperator {
     switch (token.type) {
+      case TokenType.AmpersandAmpersandEqual:
+        return '&&=';
       case TokenType.AmpersandEqual:
         return '&=';
       case TokenType.CaretEqual:
@@ -206,8 +211,12 @@ export class Parser {
         return '%=';
       case TokenType.PipeEqual:
         return '|=';
+      case TokenType.PipePipeEqual:
+        return '||=';
       case TokenType.PlusEqual:
         return '+=';
+      case TokenType.QuestionMarkQuestionMarkEqual:
+        return '??=';
       case TokenType.RightShiftEqual:
         return '>>=';
       case TokenType.SlashEqual:

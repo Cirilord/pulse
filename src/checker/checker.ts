@@ -109,6 +109,44 @@ export class Checker {
       return targetSymbol.type;
     }
 
+    if (expression.operator === '&&=' || expression.operator === '||=') {
+      if (targetSymbol.type.nullable || targetSymbol.type.name !== 'boolean') {
+        throw new CheckerError(
+          `Operator "${expression.operator}" can only be used with boolean variables.`,
+          expression.location
+        );
+      }
+
+      const valueType: ResolvedType = this.resolveExpressionType(expression.value);
+
+      if (valueType.nullable || valueType.name !== 'boolean') {
+        throw new CheckerError(`Operator "${expression.operator}" requires boolean operands.`, expression.location);
+      }
+
+      return targetSymbol.type;
+    }
+
+    if (expression.operator === '??=') {
+      if (!targetSymbol.type.nullable) {
+        throw new CheckerError('Operator "??=" can only be used with nullable variables.', expression.location);
+      }
+
+      if (expression.value.kind === 'NullLiteral') {
+        return targetSymbol.type;
+      }
+
+      const valueType: ResolvedType = this.resolveExpressionType(expression.value);
+
+      if (valueType.name !== targetSymbol.type.name) {
+        throw new CheckerError(
+          `Operator "??=" cannot combine "${this.stringifyType(targetSymbol.type)}" with "${this.stringifyType(valueType)}".`,
+          expression.location
+        );
+      }
+
+      return targetSymbol.type;
+    }
+
     if (this.isBitwiseAssignmentOperator(expression.operator)) {
       if (!this.isBitwiseType(targetSymbol.type.name)) {
         throw new CheckerError(
