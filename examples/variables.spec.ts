@@ -1,7 +1,7 @@
 import { readFile } from 'node:fs/promises';
 
 import { Checker, CheckerError } from '../src/checker/checker.js';
-import { CGenerator, CGeneratorError } from '../src/codegen/c-generator.js';
+import { CGenerator } from '../src/codegen/c-generator.js';
 import { getDefaultBinaryOutputPath, getDefaultCOutputPath } from '../src/compiler/c-compiler.js';
 import { Lexer } from '../src/lexer/lexer.js';
 import { TokenType } from '../src/lexer/token-type.js';
@@ -202,7 +202,119 @@ describe('variables example', function describeVariablesExample(): void {
         location: { end: { column: 19, line: 7 }, start: { column: 18, line: 7 } },
         type: TokenType.Semicolon,
       },
-      { lexeme: '', location: { end: { column: 1, line: 8 }, start: { column: 1, line: 8 } }, type: TokenType.EOF },
+      { lexeme: 'var', location: { end: { column: 4, line: 8 }, start: { column: 1, line: 8 } }, type: TokenType.Var },
+      {
+        lexeme: 'nickname',
+        location: { end: { column: 13, line: 8 }, start: { column: 5, line: 8 } },
+        type: TokenType.Identifier,
+      },
+      {
+        lexeme: ':',
+        location: { end: { column: 14, line: 8 }, start: { column: 13, line: 8 } },
+        type: TokenType.Colon,
+      },
+      {
+        lexeme: 'string',
+        location: { end: { column: 21, line: 8 }, start: { column: 15, line: 8 } },
+        type: TokenType.Identifier,
+      },
+      {
+        lexeme: '?',
+        location: { end: { column: 22, line: 8 }, start: { column: 21, line: 8 } },
+        type: TokenType.QuestionMark,
+      },
+      {
+        lexeme: '=',
+        location: { end: { column: 24, line: 8 }, start: { column: 23, line: 8 } },
+        type: TokenType.Equal,
+      },
+      {
+        lexeme: 'null',
+        location: { end: { column: 29, line: 8 }, start: { column: 25, line: 8 } },
+        type: TokenType.Null,
+      },
+      {
+        lexeme: ';',
+        location: { end: { column: 30, line: 8 }, start: { column: 29, line: 8 } },
+        type: TokenType.Semicolon,
+      },
+      { lexeme: 'var', location: { end: { column: 4, line: 9 }, start: { column: 1, line: 9 } }, type: TokenType.Var },
+      {
+        lexeme: 'score',
+        location: { end: { column: 10, line: 9 }, start: { column: 5, line: 9 } },
+        type: TokenType.Identifier,
+      },
+      {
+        lexeme: ':',
+        location: { end: { column: 11, line: 9 }, start: { column: 10, line: 9 } },
+        type: TokenType.Colon,
+      },
+      {
+        lexeme: 'int',
+        location: { end: { column: 15, line: 9 }, start: { column: 12, line: 9 } },
+        type: TokenType.Identifier,
+      },
+      {
+        lexeme: '?',
+        location: { end: { column: 16, line: 9 }, start: { column: 15, line: 9 } },
+        type: TokenType.QuestionMark,
+      },
+      {
+        lexeme: '=',
+        location: { end: { column: 18, line: 9 }, start: { column: 17, line: 9 } },
+        type: TokenType.Equal,
+      },
+      {
+        lexeme: 'null',
+        location: { end: { column: 23, line: 9 }, start: { column: 19, line: 9 } },
+        type: TokenType.Null,
+      },
+      {
+        lexeme: ';',
+        location: { end: { column: 24, line: 9 }, start: { column: 23, line: 9 } },
+        type: TokenType.Semicolon,
+      },
+      {
+        lexeme: 'val',
+        location: { end: { column: 4, line: 10 }, start: { column: 1, line: 10 } },
+        type: TokenType.Val,
+      },
+      {
+        lexeme: 'ratio',
+        location: { end: { column: 10, line: 10 }, start: { column: 5, line: 10 } },
+        type: TokenType.Identifier,
+      },
+      {
+        lexeme: ':',
+        location: { end: { column: 11, line: 10 }, start: { column: 10, line: 10 } },
+        type: TokenType.Colon,
+      },
+      {
+        lexeme: 'float',
+        location: { end: { column: 17, line: 10 }, start: { column: 12, line: 10 } },
+        type: TokenType.Identifier,
+      },
+      {
+        lexeme: '?',
+        location: { end: { column: 18, line: 10 }, start: { column: 17, line: 10 } },
+        type: TokenType.QuestionMark,
+      },
+      {
+        lexeme: '=',
+        location: { end: { column: 20, line: 10 }, start: { column: 19, line: 10 } },
+        type: TokenType.Equal,
+      },
+      {
+        lexeme: 'null',
+        location: { end: { column: 25, line: 10 }, start: { column: 21, line: 10 } },
+        type: TokenType.Null,
+      },
+      {
+        lexeme: ';',
+        location: { end: { column: 26, line: 10 }, start: { column: 25, line: 10 } },
+        type: TokenType.Semicolon,
+      },
+      { lexeme: '', location: { end: { column: 1, line: 11 }, start: { column: 1, line: 11 } }, type: TokenType.EOF },
     ]);
   });
 
@@ -353,9 +465,78 @@ describe('variables example', function describeVariablesExample(): void {
             name: 'char',
           },
         },
+        {
+          initializer: {
+            kind: 'NullLiteral',
+            location: { end: { column: 29, line: 8 }, start: { column: 25, line: 8 } },
+          },
+          kind: 'VariableDeclaration',
+          location: { end: { column: 30, line: 8 }, start: { column: 1, line: 8 } },
+          mutability: 'var',
+          name: {
+            kind: 'Identifier',
+            location: { end: { column: 13, line: 8 }, start: { column: 5, line: 8 } },
+            name: 'nickname',
+          },
+          type: {
+            kind: 'NullableType',
+            location: { end: { column: 22, line: 8 }, start: { column: 15, line: 8 } },
+            type: {
+              kind: 'NamedType',
+              location: { end: { column: 21, line: 8 }, start: { column: 15, line: 8 } },
+              name: 'string',
+            },
+          },
+        },
+        {
+          initializer: {
+            kind: 'NullLiteral',
+            location: { end: { column: 23, line: 9 }, start: { column: 19, line: 9 } },
+          },
+          kind: 'VariableDeclaration',
+          location: { end: { column: 24, line: 9 }, start: { column: 1, line: 9 } },
+          mutability: 'var',
+          name: {
+            kind: 'Identifier',
+            location: { end: { column: 10, line: 9 }, start: { column: 5, line: 9 } },
+            name: 'score',
+          },
+          type: {
+            kind: 'NullableType',
+            location: { end: { column: 16, line: 9 }, start: { column: 12, line: 9 } },
+            type: {
+              kind: 'NamedType',
+              location: { end: { column: 15, line: 9 }, start: { column: 12, line: 9 } },
+              name: 'int',
+            },
+          },
+        },
+        {
+          initializer: {
+            kind: 'NullLiteral',
+            location: { end: { column: 25, line: 10 }, start: { column: 21, line: 10 } },
+          },
+          kind: 'VariableDeclaration',
+          location: { end: { column: 26, line: 10 }, start: { column: 1, line: 10 } },
+          mutability: 'val',
+          name: {
+            kind: 'Identifier',
+            location: { end: { column: 10, line: 10 }, start: { column: 5, line: 10 } },
+            name: 'ratio',
+          },
+          type: {
+            kind: 'NullableType',
+            location: { end: { column: 18, line: 10 }, start: { column: 12, line: 10 } },
+            type: {
+              kind: 'NamedType',
+              location: { end: { column: 17, line: 10 }, start: { column: 12, line: 10 } },
+              name: 'float',
+            },
+          },
+        },
       ],
       kind: 'Program',
-      location: { end: { column: 1, line: 8 }, start: { column: 1, line: 1 } },
+      location: { end: { column: 1, line: 11 }, start: { column: 1, line: 1 } },
     });
   });
 
@@ -450,7 +631,7 @@ describe('variables example', function describeVariablesExample(): void {
     expect(generator.generateProgram(program)).toBe(expectedCOutput);
   });
 
-  test('rejects nullable types in the C generator for now', function testUnsupportedNullableCodegen(): void {
+  test('generates C for a nullable string declaration', function testNullableCodegen(): void {
     const sourceCode = 'var nickname: string? = null;';
     const lexer: Lexer = new Lexer(sourceCode);
     const parser: Parser = new Parser(lexer.tokenize());
@@ -460,9 +641,30 @@ describe('variables example', function describeVariablesExample(): void {
 
     checker.checkProgram(program);
 
-    expect(function generateUnsupportedNullableProgram(): void {
-      generator.generateProgram(program);
-    }).toThrow(CGeneratorError);
+    expect(generator.generateProgram(program)).toBe(
+      [
+        '#include <stdbool.h>',
+        '#include <stddef.h>',
+        '',
+        'typedef struct {',
+        '  size_t length;',
+        '  const char *data;',
+        '} string_t;',
+        '',
+        '#define STRING_LITERAL(value) ((string_t){ sizeof(value) - 1, value })',
+        '',
+        'typedef struct {',
+        '  bool is_null;',
+        '  string_t value;',
+        '} string_t_nullable;',
+        '',
+        'int main(void) {',
+        '  string_t_nullable nickname = (string_t_nullable){ .is_null = true, .value = (string_t){ .length = 0, .data = NULL } };',
+        '  return 0;',
+        '}',
+        '',
+      ].join('\n')
+    );
   });
 
   test('derives the default native output path from the source file', function testDefaultBinaryOutputPath(): void {

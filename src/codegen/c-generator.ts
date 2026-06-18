@@ -19,6 +19,12 @@ export class CGeneratorError extends Error {
 }
 
 export class CGenerator {
+  private readonly variableTypes: Map<string, TypeNode>;
+
+  public constructor() {
+    this.variableTypes = new Map<string, TypeNode>();
+  }
+
   public generateProgram(program: ProgramNode): string {
     const lines: string[] = ['#include <stdbool.h>', '#include <stddef.h>', ''];
 
@@ -32,6 +38,16 @@ export class CGenerator {
       lines.push('');
     }
 
+    for (const nullableTypeName of this.collectNullableTypeNames(program)) {
+      lines.push('typedef struct {');
+      lines.push('  bool is_null;');
+      lines.push(`  ${this.getNonNullableCType(nullableTypeName)} value;`);
+      lines.push(`} ${this.getNullableCType(nullableTypeName)};`);
+      lines.push('');
+    }
+
+    this.variableTypes.clear();
+
     lines.push('int main(void) {');
 
     for (const statement of program.body) {
@@ -44,10 +60,47 @@ export class CGenerator {
     return `${lines.join('\n')}\n`;
   }
 
+  private collectNullableTypeNames(program: ProgramNode): string[] {
+    const typeNames: Set<string> = new Set<string>();
+
+    for (const statement of program.body) {
+      if (statement.kind === 'VariableDeclaration' && statement.type.kind === 'NullableType') {
+        typeNames.add(statement.type.type.name);
+      }
+    }
+
+    return [...typeNames].sort();
+  }
+
+  private generateAssignedValue(type: TypeNode, expression: ExpressionNode): string {
+    if (type.kind === 'NullableType') {
+      if (expression.kind === 'NullLiteral') {
+        return `(${this.getNullableCType(type.type.name)}){ .is_null = true, .value = ${this.getDefaultValue(type.type.name)} }`;
+      }
+
+      if (
+        expression.kind === 'IdentifierExpression' &&
+        this.resolveVariableType(expression.name).kind === 'NullableType'
+      ) {
+        return this.generateExpression(expression);
+      }
+
+      return `(${this.getNullableCType(type.type.name)}){ .is_null = false, .value = ${this.generateNonNullableValue(
+        type.type.name,
+        expression
+      )} }`;
+    }
+
+    return this.generateNonNullableValue(type.name, expression);
+  }
+
   private generateExpression(expression: ExpressionNode): string {
     switch (expression.kind) {
       case 'AssignmentExpression':
-        return `${expression.target.name} ${expression.operator} ${this.generateExpression(expression.value)}`;
+        return `${expression.target.name} ${expression.operator} ${this.generateAssignedValue(
+          this.resolveVariableType(expression.target.name),
+          expression.value
+        )}`;
       case 'BinaryExpression':
         return `(${this.generateExpression(expression.left)} ${expression.operator} ${this.generateExpression(expression.right)})`;
       case 'BooleanLiteral':
@@ -61,7 +114,7 @@ export class CGenerator {
       case 'IntegerLiteral':
         return String(expression.value);
       case 'NullLiteral':
-        return 'NULL';
+        throw new CGeneratorError('Null literals must be emitted in a nullable context.', expression.location);
       case 'StringLiteral':
         return JSON.stringify(expression.value);
       case 'UnaryExpression':
@@ -71,6 +124,22 @@ export class CGenerator {
 
   private generateExpressionStatement(statement: ExpressionStatementNode): string {
     return `${this.generateExpression(statement.expression)};`;
+  }
+
+  private generateNonNullableValue(typeName: string, expression: ExpressionNode): string {
+    if (typeName === 'string' && expression.kind === 'StringLiteral') {
+      return `STRING_LITERAL(${this.generateExpression(expression)})`;
+    }
+
+    if (typeName === 'char' && expression.kind === 'StringLiteral') {
+      return `'${expression.value}'`;
+    }
+
+    if (typeName === 'float' && expression.kind === 'DoubleLiteral') {
+      return `${this.generateExpression(expression)}f`;
+    }
+
+    return this.generateExpression(expression);
   }
 
   private generateStatement(statement: StatementNode): string {
@@ -84,55 +153,91 @@ export class CGenerator {
 
   private generateType(type: TypeNode, mutability: 'val' | 'var'): string {
     if (type.kind === 'NullableType') {
-      throw new CGeneratorError('Nullable types are not supported by the C generator yet.', type.location);
+      const nullableCType: string = this.getNullableCType(type.type.name);
+
+      return mutability === 'val' ? `const ${nullableCType}` : nullableCType;
     }
 
-    switch (type.name) {
-      case 'boolean':
-        return mutability === 'val' ? 'const bool' : 'bool';
-      case 'byte':
-        return mutability === 'val' ? 'const unsigned char' : 'unsigned char';
-      case 'char':
-        return mutability === 'val' ? 'const char' : 'char';
-      case 'double':
-        return mutability === 'val' ? 'const double' : 'double';
-      case 'float':
-        return mutability === 'val' ? 'const float' : 'float';
-      case 'int':
-        return mutability === 'val' ? 'const int' : 'int';
-      case 'string':
-        return mutability === 'val' ? 'const string_t' : 'string_t';
-      default:
-        throw new CGeneratorError(`Unsupported C type for "${type.name}".`, type.location);
-    }
+    return this.getNonNullableType(type.name, mutability);
   }
 
   private generateVariableDeclaration(declaration: VariableDeclarationNode): string {
     const cType: string = this.generateType(declaration.type, declaration.mutability);
-    const initializer: string =
-      declaration.type.kind === 'NamedType' &&
-      declaration.type.name === 'string' &&
-      declaration.initializer.kind === 'StringLiteral'
-        ? `STRING_LITERAL(${this.generateExpression(declaration.initializer)})`
-        : declaration.type.kind === 'NamedType' &&
-            declaration.type.name === 'char' &&
-            declaration.initializer.kind === 'StringLiteral'
-          ? `'${declaration.initializer.value}'`
-          : declaration.type.kind === 'NamedType' &&
-              declaration.type.name === 'float' &&
-              declaration.initializer.kind === 'DoubleLiteral'
-            ? `${this.generateExpression(declaration.initializer)}f`
-            : this.generateExpression(declaration.initializer);
+    const initializer: string = this.generateAssignedValue(declaration.type, declaration.initializer);
+
+    this.variableTypes.set(declaration.name.name, declaration.type);
 
     return `${cType} ${declaration.name.name} = ${initializer};`;
+  }
+
+  private getDefaultValue(typeName: string): string {
+    switch (typeName) {
+      case 'boolean':
+        return 'false';
+      case 'byte':
+        return '0';
+      case 'char':
+        return "'\\0'";
+      case 'double':
+        return '0.0';
+      case 'float':
+        return '0.0f';
+      case 'int':
+        return '0';
+      case 'string':
+        return '(string_t){ .length = 0, .data = NULL }';
+      default:
+        throw new Error(`Unsupported default value for "${typeName}".`);
+    }
+  }
+
+  private getNonNullableCType(typeName: string): string {
+    switch (typeName) {
+      case 'boolean':
+        return 'bool';
+      case 'byte':
+        return 'unsigned char';
+      case 'char':
+        return 'char';
+      case 'double':
+        return 'double';
+      case 'float':
+        return 'float';
+      case 'int':
+        return 'int';
+      case 'string':
+        return 'string_t';
+      default:
+        throw new Error(`Unsupported C type for "${typeName}".`);
+    }
+  }
+
+  private getNonNullableType(typeName: string, mutability: 'val' | 'var'): string {
+    const cType: string = this.getNonNullableCType(typeName);
+
+    return mutability === 'val' ? `const ${cType}` : cType;
+  }
+
+  private getNullableCType(typeName: string): string {
+    return `${this.getNonNullableCType(typeName)}_nullable`;
+  }
+
+  private resolveVariableType(name: string): TypeNode {
+    const typeNode: TypeNode | undefined = this.variableTypes.get(name);
+
+    if (typeNode === undefined) {
+      throw new Error(`Unknown variable "${name}" in C generator.`);
+    }
+
+    return typeNode;
   }
 
   private usesStringType(program: ProgramNode): boolean {
     return program.body.some(function isStringDeclaration(statement: StatementNode): boolean {
       return (
         statement.kind === 'VariableDeclaration' &&
-        statement.type.kind === 'NamedType' &&
-        statement.type.name === 'string'
+        ((statement.type.kind === 'NamedType' && statement.type.name === 'string') ||
+          (statement.type.kind === 'NullableType' && statement.type.type.name === 'string'))
       );
     });
   }

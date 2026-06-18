@@ -48,3 +48,4 @@ val alias = null;
 - Unary `+` and unary `-` are available for numeric expressions
 - Parentheses can be used to group expressions and control precedence
 - The current C backend maps Pulse `string` values to an internal `string_t` runtime struct
+- Nullable variables are emitted as internal `<base>_nullable` structs such as `string_t_nullable`

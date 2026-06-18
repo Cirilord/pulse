@@ -18,6 +18,7 @@ This README should be kept up to date as the project evolves.
 - The compiler currently supports identifier references, grouping with parentheses, unary expressions, arithmetic, bitwise operations, comparisons, logical expressions, and compound assignment statements
 - The `compile` command currently reads the input file, tokenizes it, parses it, checks it, generates C, and compiles it with `clang` or `gcc`
 - The generated C currently maps Pulse `string` values to an internal `string_t` runtime struct
+- Nullable variables are currently emitted as internal `<base>_nullable` runtime structs in the generated C
 
 ## Setup
 
