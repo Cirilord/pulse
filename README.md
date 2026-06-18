@@ -13,7 +13,9 @@ This README should be kept up to date as the project evolves.
 - A basic lexer foundation is available in `src/lexer`
 - A basic parser foundation is available in `src/parser`
 - A basic semantic checker is available in `src/checker`
-- The `compile` command currently reads the input file, tokenizes it, parses it, checks it, and prints the AST
+- A basic C generator is available in `src/codegen`
+- A basic native compilation runner is available in `src/compiler`
+- The `compile` command currently reads the input file, tokenizes it, parses it, checks it, generates C, and compiles it with `clang` or `gcc`
 
 ## Setup
 
@@ -25,6 +27,10 @@ yarn install
 
 ```bash
 yarn start:dev compile examples/variables.p
+yarn start:dev compile examples/variables.p --emit-c
+yarn start:dev compile examples/variables.p --emit-c examples/variables.c
+yarn start:dev compile examples/variables.p -o variables-bin
+yarn generate:examples-c
 ```
 
 ## Tests

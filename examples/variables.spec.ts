@@ -1,6 +1,8 @@
 import { readFile } from 'node:fs/promises';
 
 import { Checker, CheckerError } from '../src/checker/checker.js';
+import { CGenerator, CGeneratorError } from '../src/codegen/c-generator.js';
+import { getDefaultBinaryOutputPath, getDefaultCOutputPath } from '../src/compiler/c-compiler.js';
 import { Lexer } from '../src/lexer/lexer.js';
 import { TokenType } from '../src/lexer/token-type.js';
 import { Parser } from '../src/parser/parser.js';
@@ -400,5 +402,42 @@ describe('variables example', function describeVariablesExample(): void {
     expect(function checkNullableProgram(): void {
       checker.checkProgram(parser.parseProgram());
     }).not.toThrow();
+  });
+
+  test('generates C for examples/variables.p exactly as expected', async function testCGeneratorOutput(): Promise<void> {
+    const sourceCode: string = await readFile(new URL('./variables.p', import.meta.url), 'utf8');
+    const expectedCOutput: string = await readFile(new URL('./variables.c', import.meta.url), 'utf8');
+    const lexer: Lexer = new Lexer(sourceCode);
+    const parser: Parser = new Parser(lexer.tokenize());
+    const checker: Checker = new Checker();
+    const generator: CGenerator = new CGenerator();
+    const program = parser.parseProgram();
+
+    checker.checkProgram(program);
+
+    expect(generator.generateProgram(program)).toBe(expectedCOutput);
+  });
+
+  test('derives the default native output path from the source file', function testDefaultBinaryOutputPath(): void {
+    expect(getDefaultBinaryOutputPath('examples/variables.p')).toBe(`${process.cwd()}/examples/variables`);
+  });
+
+  test('derives the default C output path from the source file', function testDefaultCOutputPath(): void {
+    expect(getDefaultCOutputPath('examples/variables.p')).toBe(`${process.cwd()}/examples/variables.c`);
+  });
+
+  test('rejects nullable types in the C generator for now', function testUnsupportedNullableCodegen(): void {
+    const sourceCode = 'var nickname: string? = null;';
+    const lexer: Lexer = new Lexer(sourceCode);
+    const parser: Parser = new Parser(lexer.tokenize());
+    const checker: Checker = new Checker();
+    const generator: CGenerator = new CGenerator();
+    const program = parser.parseProgram();
+
+    checker.checkProgram(program);
+
+    expect(function generateUnsupportedNullableProgram(): void {
+      generator.generateProgram(program);
+    }).toThrow(CGeneratorError);
   });
 });

@@ -12,9 +12,10 @@
     "start": "node dist/src/main.js",
     "start:dev": "tsx src/main.ts",
     "test": "NODE_OPTIONS=--experimental-vm-modules jest --watchman=false",
+    "generate:examples-c": "tsc -p tsconfig.json && node dist/scripts/generate-example-c.js",
     "prepare": "lefthook install || true",
-    "format": "prettier \"{src,examples}/**/*.ts\" --write",
-    "lint": "eslint \"{src,examples}/**/*.ts\" --fix",
+    "format": "prettier \"{src,examples,scripts}/**/*.ts\" --write",
+    "lint": "eslint \"{src,examples,scripts}/**/*.ts\" --fix",
     "type-check": "tsc --noEmit -p tsconfig.json"
   },
   "dependencies": {
