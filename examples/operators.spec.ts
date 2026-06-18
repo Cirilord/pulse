@@ -223,6 +223,17 @@ describe('operators example', function describeOperatorsExample(): void {
     }).toThrow(CheckerError);
   });
 
+  test('rejects conditional expressions with nullable boolean conditions', function testInvalidNullableConditionalCondition(): void {
+    const sourceCode = 'var flag: boolean? = null; val invalid: boolean = flag ? true : false;';
+    const lexer: Lexer = new Lexer(sourceCode);
+    const parser: Parser = new Parser(lexer.tokenize());
+    const checker: Checker = new Checker();
+
+    expect(function checkInvalidNullableConditionalConditionProgram(): void {
+      checker.checkProgram(parser.parseProgram());
+    }).toThrow(CheckerError);
+  });
+
   test('rejects conditional expressions with mismatched branch types', function testInvalidConditionalBranches(): void {
     const sourceCode = 'val invalid: int = true ? 1 : "Pulse";';
     const lexer: Lexer = new Lexer(sourceCode);
@@ -232,6 +243,25 @@ describe('operators example', function describeOperatorsExample(): void {
     expect(function checkInvalidConditionalBranchesProgram(): void {
       checker.checkProgram(parser.parseProgram());
     }).toThrow(CheckerError);
+  });
+
+  test('rejects unary not on numeric and nullable operands', function testInvalidUnaryNotOperands(): void {
+    const sourcePrograms: string[] = [
+      'val invalid: boolean = !0;',
+      'val invalid: boolean = !"";',
+      'val flag: boolean? = null; val invalid: boolean = !flag;',
+      'val invalid: boolean = !null;',
+    ];
+
+    for (const sourceCode of sourcePrograms) {
+      const lexer: Lexer = new Lexer(sourceCode);
+      const parser: Parser = new Parser(lexer.tokenize());
+      const checker: Checker = new Checker();
+
+      expect(function checkInvalidUnaryNotOperandsProgram(): void {
+        checker.checkProgram(parser.parseProgram());
+      }).toThrow(CheckerError);
+    }
   });
 
   test('generates C for examples/operators.p exactly as expected', async function testCGeneratorOutput(): Promise<void> {
