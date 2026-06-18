@@ -2,6 +2,7 @@ import { type TokenLocation } from '../lexer/token.js';
 import type {
   ExpressionNode,
   ExpressionStatementNode,
+  BinaryExpressionNode,
   ProgramNode,
   StatementNode,
   TypeNode,
@@ -102,6 +103,10 @@ export class CGenerator {
           expression.value
         )}`;
       case 'BinaryExpression':
+        if (expression.operator === '??') {
+          return this.generateNullCoalescingExpression(expression);
+        }
+
         return `(${this.generateExpression(expression.left)} ${expression.operator} ${this.generateExpression(expression.right)})`;
       case 'BooleanLiteral':
         return expression.value ? 'true' : 'false';
@@ -140,6 +145,34 @@ export class CGenerator {
     }
 
     return this.generateExpression(expression);
+  }
+
+  private generateNullCoalescingExpression(expression: BinaryExpressionNode): string {
+    const rightType: TypeNode = this.resolveExpressionType(expression.right);
+
+    if (expression.left.kind === 'NullLiteral') {
+      return rightType.kind === 'NullableType'
+        ? this.generateExpression(expression.right)
+        : this.generateNonNullableValue(rightType.name, expression.right);
+    }
+
+    const leftType: TypeNode = this.resolveExpressionType(expression.left);
+
+    if (leftType.kind !== 'NullableType') {
+      throw new CGeneratorError('Null coalescing requires a nullable left operand.', expression.left.location);
+    }
+
+    const leftExpression: string = this.generateExpression(expression.left);
+    const rightExpression: string =
+      rightType.kind === 'NullableType'
+        ? this.generateExpression(expression.right)
+        : this.generateNonNullableValue(rightType.name, expression.right);
+
+    if (rightType.kind === 'NullableType') {
+      return `(${leftExpression}.is_null ? ${rightExpression} : ${leftExpression})`;
+    }
+
+    return `(${leftExpression}.is_null ? ${rightExpression} : ${leftExpression}.value)`;
   }
 
   private generateStatement(statement: StatementNode): string {
@@ -220,6 +253,67 @@ export class CGenerator {
 
   private getNullableCType(typeName: string): string {
     return `${this.getNonNullableCType(typeName)}_nullable`;
+  }
+
+  private resolveExpressionType(expression: ExpressionNode): TypeNode {
+    switch (expression.kind) {
+      case 'AssignmentExpression':
+        return this.resolveVariableType(expression.target.name);
+      case 'BinaryExpression':
+        if (expression.operator === '??') {
+          return this.resolveNullCoalescingType(expression);
+        }
+
+        return this.resolveNonNullableTypeNode(expression.left);
+      case 'BooleanLiteral':
+        return { kind: 'NamedType', location: expression.location, name: 'boolean' };
+      case 'DoubleLiteral':
+        return { kind: 'NamedType', location: expression.location, name: 'double' };
+      case 'GroupingExpression':
+        return this.resolveExpressionType(expression.expression);
+      case 'IdentifierExpression':
+        return this.resolveVariableType(expression.name);
+      case 'IntegerLiteral':
+        return { kind: 'NamedType', location: expression.location, name: 'int' };
+      case 'NullLiteral':
+        throw new CGeneratorError('Null literals cannot be resolved without context.', expression.location);
+      case 'StringLiteral':
+        return { kind: 'NamedType', location: expression.location, name: 'string' };
+      case 'UnaryExpression':
+        if (expression.operator === '!') {
+          return { kind: 'NamedType', location: expression.location, name: 'boolean' };
+        }
+
+        return this.resolveExpressionType(expression.expression);
+    }
+  }
+
+  private resolveNonNullableTypeNode(expression: ExpressionNode): TypeNode {
+    const typeNode: TypeNode = this.resolveExpressionType(expression);
+
+    if (typeNode.kind === 'NullableType') {
+      throw new CGeneratorError('Expected a non-nullable expression type.', expression.location);
+    }
+
+    return typeNode;
+  }
+
+  private resolveNullCoalescingType(expression: BinaryExpressionNode): TypeNode {
+    if (expression.left.kind === 'NullLiteral') {
+      return this.resolveExpressionType(expression.right);
+    }
+
+    const leftType: TypeNode = this.resolveExpressionType(expression.left);
+
+    if (leftType.kind !== 'NullableType') {
+      throw new CGeneratorError('Null coalescing requires a nullable left operand.', expression.left.location);
+    }
+
+    if (expression.right.kind === 'NullLiteral') {
+      return leftType;
+    }
+
+    return this.resolveExpressionType(expression.right);
   }
 
   private resolveVariableType(name: string): TypeNode {

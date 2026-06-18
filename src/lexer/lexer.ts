@@ -181,6 +181,12 @@ export class Lexer {
           tokens.push(this.createToken(TokenType.Plus, startIndex, startLine, startColumn));
           break;
         case '?':
+          if (this.peek() === '?') {
+            this.advance();
+            tokens.push(this.createToken(TokenType.QuestionMarkQuestionMark, startIndex, startLine, startColumn));
+            break;
+          }
+
           tokens.push(this.createToken(TokenType.QuestionMark, startIndex, startLine, startColumn));
           break;
         case '|':

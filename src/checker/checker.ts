@@ -143,6 +143,10 @@ export class Checker {
   }
 
   private checkBinaryExpression(expression: BinaryExpressionNode): ResolvedType {
+    if (expression.operator === '??') {
+      return this.resolveNullCoalescingExpressionType(expression);
+    }
+
     const leftType: ResolvedType = this.resolveExpressionType(expression.left);
     const rightType: ResolvedType = this.resolveExpressionType(expression.right);
 
@@ -305,6 +309,43 @@ export class Checker {
     }
 
     return type.name as PrimitiveTypeName;
+  }
+
+  private resolveNullCoalescingExpressionType(expression: BinaryExpressionNode): ResolvedType {
+    if (expression.left.kind === 'NullLiteral') {
+      if (expression.right.kind === 'NullLiteral') {
+        throw new CheckerError('Operator "??" cannot coalesce null with null.', expression.location);
+      }
+
+      return this.resolveExpressionType(expression.right);
+    }
+
+    const leftType: ResolvedType = this.resolveExpressionType(expression.left);
+
+    if (!leftType.nullable) {
+      throw new CheckerError(
+        'Operator "??" requires a nullable left operand or a null literal.',
+        expression.left.location
+      );
+    }
+
+    if (expression.right.kind === 'NullLiteral') {
+      return leftType;
+    }
+
+    const rightType: ResolvedType = this.resolveExpressionType(expression.right);
+
+    if (leftType.name !== rightType.name) {
+      throw new CheckerError(
+        `Operator "??" cannot combine "${this.stringifyType(leftType)}" with "${this.stringifyType(rightType)}".`,
+        expression.location
+      );
+    }
+
+    return {
+      name: leftType.name,
+      nullable: rightType.nullable,
+    };
   }
 
   private resolveType(type: TypeNode): ResolvedType {

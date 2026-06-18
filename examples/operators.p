@@ -9,3 +9,5 @@ val orCheck: boolean = true || false;
 val unaryNot: boolean = !false;
 val unaryMinus: int = -5 + 2;
 val unaryPlus: int = +5;
+var alias: string? = null;
+val fallbackAlias: string = alias ?? "guest";

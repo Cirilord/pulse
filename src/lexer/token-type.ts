@@ -31,6 +31,7 @@ export enum TokenType {
   PlusEqual = 'PlusEqual',
   PipePipe = 'PipePipe',
   QuestionMark = 'QuestionMark',
+  QuestionMarkQuestionMark = 'QuestionMarkQuestionMark',
   RightBrace = 'RightBrace',
   RightParen = 'RightParen',
   RightShift = 'RightShift',

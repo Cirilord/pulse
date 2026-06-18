@@ -151,7 +151,7 @@ export class Parser {
   }
 
   private parseAssignmentExpression(): ExpressionNode {
-    const leftExpression: ExpressionNode = this.parseLogicalOrExpression();
+    const leftExpression: ExpressionNode = this.parseNullCoalescingExpression();
 
     if (
       !this.match(
@@ -251,6 +251,8 @@ export class Parser {
         return '||';
       case TokenType.Plus:
         return '+';
+      case TokenType.QuestionMarkQuestionMark:
+        return '??';
       case TokenType.RightShift:
         return '>>';
       case TokenType.Slash:
@@ -423,6 +425,26 @@ export class Parser {
     while (this.match(TokenType.Star, TokenType.Slash, TokenType.Percent)) {
       const operatorToken: Token = this.previous();
       const rightExpression: ExpressionNode = this.parseUnaryExpression();
+      const binaryExpression: BinaryExpressionNode = {
+        kind: 'BinaryExpression',
+        left: expression,
+        location: this.mergeLocations(expression.location, rightExpression.location),
+        operator: this.parseBinaryOperator(operatorToken),
+        right: rightExpression,
+      };
+
+      expression = binaryExpression;
+    }
+
+    return expression;
+  }
+
+  private parseNullCoalescingExpression(): ExpressionNode {
+    let expression: ExpressionNode = this.parseLogicalOrExpression();
+
+    while (this.match(TokenType.QuestionMarkQuestionMark)) {
+      const operatorToken: Token = this.previous();
+      const rightExpression: ExpressionNode = this.parseLogicalOrExpression();
       const binaryExpression: BinaryExpressionNode = {
         kind: 'BinaryExpression',
         left: expression,

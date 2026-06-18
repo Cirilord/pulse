@@ -26,6 +26,7 @@ describe('operators example', function describeOperatorsExample(): void {
     expect(tokens).toContainEqual({ lexeme: '&&', type: TokenType.AmpersandAmpersand });
     expect(tokens).toContainEqual({ lexeme: '||', type: TokenType.PipePipe });
     expect(tokens).toContainEqual({ lexeme: '!', type: TokenType.Bang });
+    expect(tokens).toContainEqual({ lexeme: '??', type: TokenType.QuestionMarkQuestionMark });
   });
 
   test('parses comparison, logical, and unary expressions', async function testParserOutput(): Promise<void> {
@@ -52,6 +53,13 @@ describe('operators example', function describeOperatorsExample(): void {
       initializer: {
         kind: 'UnaryExpression',
         operator: '!',
+      },
+    });
+
+    expect(program.body[12]).toMatchObject({
+      initializer: {
+        kind: 'BinaryExpression',
+        operator: '??',
       },
     });
   });
@@ -85,6 +93,28 @@ describe('operators example', function describeOperatorsExample(): void {
     const checker: Checker = new Checker();
 
     expect(function checkInvalidComparisonProgram(): void {
+      checker.checkProgram(parser.parseProgram());
+    }).toThrow(CheckerError);
+  });
+
+  test('rejects null coalescing on a non-nullable left operand', function testInvalidNullCoalescingLeftOperand(): void {
+    const sourceCode = 'val name: string = "Pulse"; val fallback: string = name ?? "guest";';
+    const lexer: Lexer = new Lexer(sourceCode);
+    const parser: Parser = new Parser(lexer.tokenize());
+    const checker: Checker = new Checker();
+
+    expect(function checkInvalidNullCoalescingLeftOperandProgram(): void {
+      checker.checkProgram(parser.parseProgram());
+    }).toThrow(CheckerError);
+  });
+
+  test('rejects null coalescing across mismatched types', function testInvalidNullCoalescingTypes(): void {
+    const sourceCode = 'val alias: string? = null; val fallback: string = alias ?? 1;';
+    const lexer: Lexer = new Lexer(sourceCode);
+    const parser: Parser = new Parser(lexer.tokenize());
+    const checker: Checker = new Checker();
+
+    expect(function checkInvalidNullCoalescingTypesProgram(): void {
       checker.checkProgram(parser.parseProgram());
     }).toThrow(CheckerError);
   });
