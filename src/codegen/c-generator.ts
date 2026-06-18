@@ -13,7 +13,19 @@ export class CGeneratorError extends Error {
 
 export class CGenerator {
   public generateProgram(program: ProgramNode): string {
-    const lines: string[] = ['#include <stdbool.h>', '#include <stddef.h>', '', 'int main(void) {'];
+    const lines: string[] = ['#include <stdbool.h>', '#include <stddef.h>', ''];
+
+    if (this.usesStringType(program)) {
+      lines.push('typedef struct {');
+      lines.push('  size_t length;');
+      lines.push('  const char *data;');
+      lines.push('} string_t;');
+      lines.push('');
+      lines.push('#define STRING_LITERAL(value) ((string_t){ sizeof(value) - 1, value })');
+      lines.push('');
+    }
+
+    lines.push('int main(void) {');
 
     for (const statement of program.body) {
       lines.push(`  ${this.generateVariableDeclaration(statement)}`);
@@ -59,7 +71,7 @@ export class CGenerator {
       case 'int':
         return mutability === 'val' ? 'const int' : 'int';
       case 'string':
-        return mutability === 'val' ? 'const char * const' : 'const char *';
+        return mutability === 'val' ? 'const string_t' : 'string_t';
       default:
         throw new CGeneratorError(`Unsupported C type for "${type.name}".`, type.location);
     }
@@ -69,15 +81,25 @@ export class CGenerator {
     const cType: string = this.generateType(declaration.type, declaration.mutability);
     const initializer: string =
       declaration.type.kind === 'NamedType' &&
-      declaration.type.name === 'char' &&
+      declaration.type.name === 'string' &&
       declaration.initializer.kind === 'StringLiteral'
-        ? `'${declaration.initializer.value}'`
+        ? `STRING_LITERAL(${this.generateExpression(declaration.initializer)})`
         : declaration.type.kind === 'NamedType' &&
-            declaration.type.name === 'float' &&
-            declaration.initializer.kind === 'DoubleLiteral'
-          ? `${this.generateExpression(declaration.initializer)}f`
-          : this.generateExpression(declaration.initializer);
+            declaration.type.name === 'char' &&
+            declaration.initializer.kind === 'StringLiteral'
+          ? `'${declaration.initializer.value}'`
+          : declaration.type.kind === 'NamedType' &&
+              declaration.type.name === 'float' &&
+              declaration.initializer.kind === 'DoubleLiteral'
+            ? `${this.generateExpression(declaration.initializer)}f`
+            : this.generateExpression(declaration.initializer);
 
     return `${cType} ${declaration.name.name} = ${initializer};`;
+  }
+
+  private usesStringType(program: ProgramNode): boolean {
+    return program.body.some(function isStringDeclaration(statement: VariableDeclarationNode): boolean {
+      return statement.type.kind === 'NamedType' && statement.type.name === 'string';
+    });
   }
 }

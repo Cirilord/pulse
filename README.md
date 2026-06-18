@@ -16,6 +16,7 @@ This README should be kept up to date as the project evolves.
 - A basic C generator is available in `src/codegen`
 - A basic native compilation runner is available in `src/compiler`
 - The `compile` command currently reads the input file, tokenizes it, parses it, checks it, generates C, and compiles it with `clang` or `gcc`
+- The generated C currently maps Pulse `string` values to an internal `string_t` runtime struct
 
 ## Setup
 
