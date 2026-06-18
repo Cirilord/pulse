@@ -8,7 +8,14 @@ import type {
   VariableDeclarationNode,
 } from '../parser/ast/index.js';
 
-const PRIMITIVE_TYPES: ReadonlySet<string> = new Set<PrimitiveTypeName>(['int', 'string']);
+const PRIMITIVE_TYPES: ReadonlySet<string> = new Set<PrimitiveTypeName>([
+  'boolean',
+  'byte',
+  'double',
+  'float',
+  'int',
+  'string',
+]);
 
 export class CheckerError extends Error {
   public readonly location: TokenLocation;
@@ -36,6 +43,18 @@ export class Checker {
       return;
     }
 
+    if (targetType.name === 'byte' && expression.kind === 'IntegerLiteral') {
+      if (expression.value < 0 || expression.value > 255) {
+        throw new CheckerError('Byte literals must be between 0 and 255.', expression.location);
+      }
+
+      return;
+    }
+
+    if (targetType.name === 'float' && expression.kind === 'DoubleLiteral') {
+      return;
+    }
+
     const expressionType: PrimitiveTypeName = this.resolveExpressionType(expression);
 
     if (targetType.name !== expressionType) {
@@ -54,6 +73,10 @@ export class Checker {
 
   private resolveExpressionType(expression: ExpressionNode): PrimitiveTypeName {
     switch (expression.kind) {
+      case 'BooleanLiteral':
+        return 'boolean';
+      case 'DoubleLiteral':
+        return 'double';
       case 'IntegerLiteral':
         return 'int';
       case 'StringLiteral':

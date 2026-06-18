@@ -13,7 +13,7 @@ export class CGeneratorError extends Error {
 
 export class CGenerator {
   public generateProgram(program: ProgramNode): string {
-    const lines: string[] = ['#include <stddef.h>', '', 'int main(void) {'];
+    const lines: string[] = ['#include <stdbool.h>', '#include <stddef.h>', '', 'int main(void) {'];
 
     for (const statement of program.body) {
       lines.push(`  ${this.generateVariableDeclaration(statement)}`);
@@ -27,6 +27,10 @@ export class CGenerator {
 
   private generateExpression(expression: ExpressionNode): string {
     switch (expression.kind) {
+      case 'BooleanLiteral':
+        return expression.value ? 'true' : 'false';
+      case 'DoubleLiteral':
+        return String(expression.value);
       case 'IntegerLiteral':
         return String(expression.value);
       case 'NullLiteral':
@@ -42,6 +46,14 @@ export class CGenerator {
     }
 
     switch (type.name) {
+      case 'boolean':
+        return mutability === 'val' ? 'const bool' : 'bool';
+      case 'byte':
+        return mutability === 'val' ? 'const unsigned char' : 'unsigned char';
+      case 'double':
+        return mutability === 'val' ? 'const double' : 'double';
+      case 'float':
+        return mutability === 'val' ? 'const float' : 'float';
       case 'int':
         return mutability === 'val' ? 'const int' : 'int';
       case 'string':
@@ -53,7 +65,12 @@ export class CGenerator {
 
   private generateVariableDeclaration(declaration: VariableDeclarationNode): string {
     const cType: string = this.generateType(declaration.type, declaration.mutability);
-    const initializer: string = this.generateExpression(declaration.initializer);
+    const initializer: string =
+      declaration.type.kind === 'NamedType' &&
+      declaration.type.name === 'float' &&
+      declaration.initializer.kind === 'DoubleLiteral'
+        ? `${this.generateExpression(declaration.initializer)}f`
+        : this.generateExpression(declaration.initializer);
 
     return `${cType} ${declaration.name.name} = ${initializer};`;
   }

@@ -115,6 +115,26 @@ export class Parser {
   }
 
   private parseExpression(): ExpressionNode {
+    if (this.match(TokenType.True, TokenType.False)) {
+      const token: Token = this.previous();
+
+      return {
+        kind: 'BooleanLiteral',
+        location: token.location,
+        value: token.type === TokenType.True,
+      };
+    }
+
+    if (this.match(TokenType.DoubleLiteral)) {
+      const token: Token = this.previous();
+
+      return {
+        kind: 'DoubleLiteral',
+        location: token.location,
+        value: Number(token.lexeme),
+      };
+    }
+
     if (this.match(TokenType.IntegerLiteral)) {
       const token: Token = this.previous();
 

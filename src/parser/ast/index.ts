@@ -1,5 +1,12 @@
 export type { BaseNode } from './base-node.js';
-export type { ExpressionNode, IntegerLiteralNode, NullLiteralNode, StringLiteralNode } from './expression-node.js';
+export type {
+  BooleanLiteralNode,
+  DoubleLiteralNode,
+  ExpressionNode,
+  IntegerLiteralNode,
+  NullLiteralNode,
+  StringLiteralNode,
+} from './expression-node.js';
 export type { IdentifierNode } from './identifier-node.js';
 export type { ProgramNode } from './program-node.js';
 export type { StatementNode } from './statement-node.js';

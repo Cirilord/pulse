@@ -11,11 +11,16 @@ Pulse uses explicit static typing with no type inference.
 - To start with `null`, the declared type must be nullable
 - Nullable types use the `?` suffix
 - `null` is an explicit keyword and literal
+- The current primitive types are `int`, `byte`, `float`, `double`, `string`, and `boolean`
 
 ## Valid Examples
 
 ```pulse
 var age: int = 30;
+var flags: byte = 255;
+val ratio: float = 12.25;
+val score: double = 42.5;
+var enabled: boolean = true;
 val name: string = "Pulse";
 var nickname: string? = null;
 val alias: string? = null;

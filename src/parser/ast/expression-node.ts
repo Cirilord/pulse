@@ -1,5 +1,15 @@
 import type { BaseNode } from './base-node.js';
 
+export type BooleanLiteralNode = BaseNode & {
+  kind: 'BooleanLiteral';
+  value: boolean;
+};
+
+export type DoubleLiteralNode = BaseNode & {
+  kind: 'DoubleLiteral';
+  value: number;
+};
+
 export type IntegerLiteralNode = BaseNode & {
   kind: 'IntegerLiteral';
   value: number;
@@ -14,4 +24,9 @@ export type StringLiteralNode = BaseNode & {
   value: string;
 };
 
-export type ExpressionNode = IntegerLiteralNode | NullLiteralNode | StringLiteralNode;
+export type ExpressionNode =
+  | BooleanLiteralNode
+  | DoubleLiteralNode
+  | IntegerLiteralNode
+  | NullLiteralNode
+  | StringLiteralNode;

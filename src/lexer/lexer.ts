@@ -202,6 +202,16 @@ export class Lexer {
       this.advance();
     }
 
+    if (this.peek() === '.' && this.isDigit(this.peekNext())) {
+      this.advance();
+
+      while (this.isDigit(this.peek())) {
+        this.advance();
+      }
+
+      return this.createToken(TokenType.DoubleLiteral, startIndex, startLine, startColumn);
+    }
+
     return this.createToken(TokenType.IntegerLiteral, startIndex, startLine, startColumn);
   }
 
