@@ -12,7 +12,8 @@ This README should be kept up to date as the project evolves.
 
 - A basic lexer foundation is available in `src/lexer`
 - A basic parser foundation is available in `src/parser`
-- The `compile` command currently reads the input file, tokenizes it, parses it, and prints the AST
+- A basic semantic checker is available in `src/checker`
+- The `compile` command currently reads the input file, tokenizes it, parses it, checks it, and prints the AST
 
 ## Setup
 

@@ -1,5 +1,6 @@
 import { readFile } from 'node:fs/promises';
 
+import { Checker, CheckerError } from '../src/checker/checker.js';
 import { Lexer } from '../src/lexer/lexer.js';
 import { TokenType } from '../src/lexer/token-type.js';
 import { Parser } from '../src/parser/parser.js';
@@ -355,5 +356,49 @@ describe('variables example', function describeVariablesExample(): void {
         },
       },
     });
+  });
+
+  test('checks examples/variables.p without semantic errors', async function testCheckerOutput(): Promise<void> {
+    const sourceCode: string = await readFile(new URL('./variables.p', import.meta.url), 'utf8');
+    const lexer: Lexer = new Lexer(sourceCode);
+    const parser: Parser = new Parser(lexer.tokenize());
+    const checker: Checker = new Checker();
+
+    expect(function checkVariablesProgram(): void {
+      checker.checkProgram(parser.parseProgram());
+    }).not.toThrow();
+  });
+
+  test('rejects null for a non-nullable type', function testNonNullableNullAssignment(): void {
+    const sourceCode = 'var nickname: string = null;';
+    const lexer: Lexer = new Lexer(sourceCode);
+    const parser: Parser = new Parser(lexer.tokenize());
+    const checker: Checker = new Checker();
+
+    expect(function checkInvalidProgram(): void {
+      checker.checkProgram(parser.parseProgram());
+    }).toThrow(CheckerError);
+  });
+
+  test('rejects an incompatible initializer type', function testIncompatibleInitializerType(): void {
+    const sourceCode = 'val age: int = "Pulse";';
+    const lexer: Lexer = new Lexer(sourceCode);
+    const parser: Parser = new Parser(lexer.tokenize());
+    const checker: Checker = new Checker();
+
+    expect(function checkInvalidProgram(): void {
+      checker.checkProgram(parser.parseProgram());
+    }).toThrow(CheckerError);
+  });
+
+  test('accepts null for a nullable type', function testNullableNullAssignment(): void {
+    const sourceCode = 'var nickname: string? = null;';
+    const lexer: Lexer = new Lexer(sourceCode);
+    const parser: Parser = new Parser(lexer.tokenize());
+    const checker: Checker = new Checker();
+
+    expect(function checkNullableProgram(): void {
+      checker.checkProgram(parser.parseProgram());
+    }).not.toThrow();
   });
 });
