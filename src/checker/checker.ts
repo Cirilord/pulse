@@ -109,6 +109,23 @@ export class Checker {
       return targetSymbol.type;
     }
 
+    if (this.isBitwiseAssignmentOperator(expression.operator)) {
+      if (!this.isBitwiseType(targetSymbol.type.name)) {
+        throw new CheckerError(
+          `Operator "${expression.operator}" can only be used with int and byte variables.`,
+          expression.location
+        );
+      }
+
+      const valueType: ResolvedType = this.resolveExpressionType(expression.value);
+
+      if (valueType.nullable || !this.isBitwiseType(valueType.name)) {
+        throw new CheckerError(`Operator "${expression.operator}" requires int or byte operands.`, expression.location);
+      }
+
+      return targetSymbol.type;
+    }
+
     if (!this.isNumericType(targetSymbol.type.name)) {
       throw new CheckerError(
         `Operator "${expression.operator}" can only be used with numeric variables.`,
@@ -153,6 +170,21 @@ export class Checker {
 
     if (expression.operator === '==' || expression.operator === '!=') {
       return { name: 'boolean', nullable: false };
+    }
+
+    if (this.isBitwiseBinaryOperator(expression.operator)) {
+      if (!this.isBitwiseType(leftType.name)) {
+        throw new CheckerError(
+          `Operator "${expression.operator}" can only be used with int and byte operands.`,
+          expression.location
+        );
+      }
+
+      if (expression.operator === '<<' || expression.operator === '>>') {
+        return leftType;
+      }
+
+      return leftType;
     }
 
     if (!this.isNumericType(leftType.name)) {
@@ -210,6 +242,18 @@ export class Checker {
       mutability: declaration.mutability,
       type: declaredType,
     });
+  }
+
+  private isBitwiseAssignmentOperator(operator: AssignmentExpressionNode['operator']): boolean {
+    return operator === '&=' || operator === '<<=' || operator === '>>=' || operator === '^=' || operator === '|=';
+  }
+
+  private isBitwiseBinaryOperator(operator: BinaryExpressionNode['operator']): boolean {
+    return operator === '&' || operator === '<<' || operator === '>>' || operator === '^' || operator === '|';
+  }
+
+  private isBitwiseType(typeName: PrimitiveTypeName): boolean {
+    return typeName === 'byte' || typeName === 'int';
   }
 
   private isModuloCompatibleType(typeName: PrimitiveTypeName): boolean {
@@ -301,6 +345,12 @@ export class Checker {
             `Operator "${expression.operator}" can only be used with numeric operands.`,
             expression.location
           );
+        }
+
+        return operandType;
+      case '~':
+        if (!this.isBitwiseType(operandType.name)) {
+          throw new CheckerError('Operator "~" can only be used with int and byte operands.', expression.location);
         }
 
         return operandType;

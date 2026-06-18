@@ -1,6 +1,6 @@
 import type { BaseNode } from './base-node.js';
 
-export type AssignmentOperator = '=' | '+=' | '-=' | '*=' | '/=' | '%=';
+export type AssignmentOperator = '=' | '&=' | '<<=' | '>>=' | '^=' | '|=' | '+=' | '-=' | '*=' | '/=' | '%=';
 
 export type AssignmentExpressionNode = BaseNode & {
   kind: 'AssignmentExpression';
@@ -9,7 +9,25 @@ export type AssignmentExpressionNode = BaseNode & {
   value: ExpressionNode;
 };
 
-export type BinaryOperator = '&&' | '!=' | '%' | '*' | '+' | '-' | '/' | '<' | '<=' | '==' | '>' | '>=' | '||';
+export type BinaryOperator =
+  | '&&'
+  | '&'
+  | '!='
+  | '%'
+  | '*'
+  | '+'
+  | '-'
+  | '/'
+  | '<'
+  | '<<'
+  | '<='
+  | '=='
+  | '>'
+  | '>='
+  | '>>'
+  | '^'
+  | '|'
+  | '||';
 
 export type BinaryExpressionNode = BaseNode & {
   kind: 'BinaryExpression';
@@ -18,7 +36,7 @@ export type BinaryExpressionNode = BaseNode & {
   right: ExpressionNode;
 };
 
-export type UnaryOperator = '!' | '+' | '-';
+export type UnaryOperator = '!' | '+' | '-' | '~';
 
 export type UnaryExpressionNode = BaseNode & {
   expression: ExpressionNode;
