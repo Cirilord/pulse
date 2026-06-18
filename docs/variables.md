@@ -47,6 +47,7 @@ val alias = null;
 - Compound assignments `&&=`, `||=`, and `??=` are available for compatible boolean and nullable variables
 - Bitwise operators `&`, `|`, `^`, `<<`, `>>`, and `~` are available for `int` and `byte`
 - Logical operators `&&`, `||`, and `!` are available for boolean expressions
+- Conditional expressions `condition ? whenTrue : whenFalse` are available when both branches resolve to the same type
 - Unary `+` and unary `-` are available for numeric expressions
 - Parentheses can be used to group expressions and control precedence
 - The current C backend maps Pulse `string` values to an internal `string_t` runtime struct

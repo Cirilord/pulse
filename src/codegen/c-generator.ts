@@ -3,6 +3,7 @@ import type {
   ExpressionNode,
   ExpressionStatementNode,
   BinaryExpressionNode,
+  ConditionalExpressionNode,
   ProgramNode,
   StatementNode,
   TypeNode,
@@ -95,6 +96,15 @@ export class CGenerator {
     return this.generateNonNullableValue(type.name, expression);
   }
 
+  private generateConditionalExpression(expression: ConditionalExpressionNode): string {
+    const resultType: TypeNode = this.resolveExpressionType(expression);
+    const conditionExpression: string = this.generateExpression(expression.condition);
+    const elseExpression: string = this.generateTypedExpression(resultType, expression.elseExpression);
+    const thenExpression: string = this.generateTypedExpression(resultType, expression.thenExpression);
+
+    return `(${conditionExpression} ? ${thenExpression} : ${elseExpression})`;
+  }
+
   private generateExpression(expression: ExpressionNode): string {
     switch (expression.kind) {
       case 'AssignmentExpression':
@@ -118,6 +128,8 @@ export class CGenerator {
         return `(${this.generateExpression(expression.left)} ${expression.operator} ${this.generateExpression(expression.right)})`;
       case 'BooleanLiteral':
         return expression.value ? 'true' : 'false';
+      case 'ConditionalExpression':
+        return this.generateConditionalExpression(expression);
       case 'DoubleLiteral':
         return String(expression.value);
       case 'GroupingExpression':
@@ -223,6 +235,14 @@ export class CGenerator {
     return this.getNonNullableType(type.name, mutability);
   }
 
+  private generateTypedExpression(type: TypeNode, expression: ExpressionNode): string {
+    if (type.kind === 'NullableType') {
+      return this.generateAssignedValue(type, expression);
+    }
+
+    return this.generateNonNullableValue(type.name, expression);
+  }
+
   private generateVariableDeclaration(declaration: VariableDeclarationNode): string {
     const cType: string = this.generateType(declaration.type, declaration.mutability);
     const initializer: string = this.generateAssignedValue(declaration.type, declaration.initializer);
@@ -284,6 +304,22 @@ export class CGenerator {
     return `${this.getNonNullableCType(typeName)}_nullable`;
   }
 
+  private resolveConditionalExpressionType(expression: ConditionalExpressionNode): TypeNode {
+    if (expression.thenExpression.kind === 'NullLiteral' && expression.elseExpression.kind === 'NullLiteral') {
+      throw new CGeneratorError('Conditional expressions cannot use null in both branches.', expression.location);
+    }
+
+    if (expression.thenExpression.kind === 'NullLiteral') {
+      return this.resolveExpressionType(expression.elseExpression);
+    }
+
+    if (expression.elseExpression.kind === 'NullLiteral') {
+      return this.resolveExpressionType(expression.thenExpression);
+    }
+
+    return this.resolveExpressionType(expression.thenExpression);
+  }
+
   private resolveExpressionType(expression: ExpressionNode): TypeNode {
     switch (expression.kind) {
       case 'AssignmentExpression':
@@ -296,6 +332,8 @@ export class CGenerator {
         return this.resolveNonNullableTypeNode(expression.left);
       case 'BooleanLiteral':
         return { kind: 'NamedType', location: expression.location, name: 'boolean' };
+      case 'ConditionalExpression':
+        return this.resolveConditionalExpressionType(expression);
       case 'DoubleLiteral':
         return { kind: 'NamedType', location: expression.location, name: 'double' };
       case 'GroupingExpression':

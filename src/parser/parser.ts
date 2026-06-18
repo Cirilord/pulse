@@ -5,6 +5,7 @@ import type {
   AssignmentOperator,
   BinaryExpressionNode,
   BinaryOperator,
+  ConditionalExpressionNode,
   ExpressionNode,
   ExpressionStatementNode,
   IdentifierNode,
@@ -151,7 +152,7 @@ export class Parser {
   }
 
   private parseAssignmentExpression(): ExpressionNode {
-    const leftExpression: ExpressionNode = this.parseNullCoalescingExpression();
+    const leftExpression: ExpressionNode = this.parseConditionalExpression();
 
     if (
       !this.match(
@@ -351,6 +352,29 @@ export class Parser {
     }
 
     return expression;
+  }
+
+  private parseConditionalExpression(): ExpressionNode {
+    const conditionExpression: ExpressionNode = this.parseNullCoalescingExpression();
+
+    if (!this.match(TokenType.QuestionMark)) {
+      return conditionExpression;
+    }
+
+    const thenExpression: ExpressionNode = this.parseAssignmentExpression();
+
+    this.consume(TokenType.Colon, 'Expected ":" after the true branch of the conditional expression.');
+
+    const elseExpression: ExpressionNode = this.parseAssignmentExpression();
+    const conditionalExpression: ConditionalExpressionNode = {
+      condition: conditionExpression,
+      elseExpression,
+      kind: 'ConditionalExpression',
+      location: this.mergeLocations(conditionExpression.location, elseExpression.location),
+      thenExpression,
+    };
+
+    return conditionalExpression;
   }
 
   private parseEqualityExpression(): ExpressionNode {

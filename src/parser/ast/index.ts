@@ -5,6 +5,7 @@ export type {
   BinaryExpressionNode,
   BinaryOperator,
   BooleanLiteralNode,
+  ConditionalExpressionNode,
   DoubleLiteralNode,
   ExpressionNode,
   GroupingExpressionNode,

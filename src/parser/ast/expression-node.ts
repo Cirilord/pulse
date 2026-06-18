@@ -23,6 +23,13 @@ export type AssignmentExpressionNode = BaseNode & {
   value: ExpressionNode;
 };
 
+export type ConditionalExpressionNode = BaseNode & {
+  condition: ExpressionNode;
+  elseExpression: ExpressionNode;
+  kind: 'ConditionalExpression';
+  thenExpression: ExpressionNode;
+};
+
 export type BinaryOperator =
   | '&&'
   | '&'
@@ -97,6 +104,7 @@ export type ExpressionNode =
   | AssignmentExpressionNode
   | BinaryExpressionNode
   | BooleanLiteralNode
+  | ConditionalExpressionNode
   | DoubleLiteralNode
   | GroupingExpressionNode
   | IdentifierExpressionNode

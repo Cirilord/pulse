@@ -12,6 +12,7 @@ val unaryPlus: int = +5;
 var enabled: boolean = false;
 enabled ||= true;
 enabled &&= false;
+val ternaryValue: int = true ? 1 : 2;
 var alias: string? = null;
 alias ??= "guest";
 val fallbackAlias: string = alias ?? "guest";

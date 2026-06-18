@@ -3,6 +3,7 @@ import { type TokenLocation } from '../lexer/token.js';
 import type {
   AssignmentExpressionNode,
   BinaryExpressionNode,
+  ConditionalExpressionNode,
   ExpressionNode,
   ExpressionStatementNode,
   IdentifierExpressionNode,
@@ -252,6 +253,59 @@ export class Checker {
     return leftType;
   }
 
+  private checkConditionalExpression(expression: ConditionalExpressionNode): ResolvedType {
+    const conditionType: ResolvedType = this.resolveExpressionType(expression.condition);
+
+    if (conditionType.nullable || conditionType.name !== 'boolean') {
+      throw new CheckerError(
+        'Conditional expressions require a non-nullable boolean condition.',
+        expression.condition.location
+      );
+    }
+
+    if (expression.thenExpression.kind === 'NullLiteral' && expression.elseExpression.kind === 'NullLiteral') {
+      throw new CheckerError('Conditional expressions cannot use null in both branches.', expression.location);
+    }
+
+    if (expression.thenExpression.kind === 'NullLiteral') {
+      const elseType: ResolvedType = this.resolveExpressionType(expression.elseExpression);
+
+      if (!elseType.nullable) {
+        throw new CheckerError(
+          'Null branches in conditional expressions require a nullable opposite branch.',
+          expression.thenExpression.location
+        );
+      }
+
+      return elseType;
+    }
+
+    if (expression.elseExpression.kind === 'NullLiteral') {
+      const thenType: ResolvedType = this.resolveExpressionType(expression.thenExpression);
+
+      if (!thenType.nullable) {
+        throw new CheckerError(
+          'Null branches in conditional expressions require a nullable opposite branch.',
+          expression.elseExpression.location
+        );
+      }
+
+      return thenType;
+    }
+
+    const thenType: ResolvedType = this.resolveExpressionType(expression.thenExpression);
+    const elseType: ResolvedType = this.resolveExpressionType(expression.elseExpression);
+
+    if (thenType.name !== elseType.name || thenType.nullable !== elseType.nullable) {
+      throw new CheckerError(
+        `Conditional expression branches must have matching types, got "${this.stringifyType(thenType)}" and "${this.stringifyType(elseType)}".`,
+        expression.location
+      );
+    }
+
+    return thenType;
+  }
+
   private checkExpressionStatement(statement: ExpressionStatementNode): void {
     this.resolveExpressionType(statement.expression);
   }
@@ -314,6 +368,8 @@ export class Checker {
         return this.checkBinaryExpression(expression);
       case 'BooleanLiteral':
         return { name: 'boolean', nullable: false };
+      case 'ConditionalExpression':
+        return this.checkConditionalExpression(expression);
       case 'DoubleLiteral':
         return { name: 'double', nullable: false };
       case 'GroupingExpression':

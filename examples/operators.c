@@ -28,6 +28,7 @@ int main(void) {
   bool enabled = false;
   enabled = (enabled || true);
   enabled = (enabled && false);
+  const int ternaryValue = (true ? 1 : 2);
   string_t_nullable alias = (string_t_nullable){ .is_null = true, .value = (string_t){ .length = 0, .data = NULL } };
   alias = (alias.is_null ? (string_t_nullable){ .is_null = false, .value = STRING_LITERAL("guest") } : alias);
   const string_t fallbackAlias = (alias.is_null ? STRING_LITERAL("guest") : alias.value);
