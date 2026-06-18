@@ -1,0 +1,11 @@
+val equalCheck: boolean = 3 == 3;
+val notEqualCheck: boolean = 3 != 4;
+val lessCheck: boolean = 2 < 3;
+val lessOrEqualCheck: boolean = 3 <= 3;
+val greaterCheck: boolean = 4 > 3;
+val greaterOrEqualCheck: boolean = 4 >= 4;
+val andCheck: boolean = true && false;
+val orCheck: boolean = true || false;
+val unaryNot: boolean = !false;
+val unaryMinus: int = -5 + 2;
+val unaryPlus: int = +5;

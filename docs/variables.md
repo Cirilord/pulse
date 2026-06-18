@@ -8,6 +8,7 @@ Pulse uses explicit static typing with no type inference.
 - `val` declares an immutable value
 - All variable declarations must include an explicit type
 - `val` declarations must always include an initializer
+- `var` declarations can be reassigned with `=`, `+=`, `-=`, `*=`, `/=`, and `%=` when the types are compatible
 - To start with `null`, the declared type must be nullable
 - Nullable types use the `?` suffix
 - `null` is an explicit keyword and literal
@@ -40,4 +41,8 @@ val alias = null;
 
 - `string?` means `string | null`
 - `return null;` is only valid when the expected return type is nullable
+- Numeric variables can be used in arithmetic expressions with `+`, `-`, `*`, `/`, and `%`
+- Comparison operators `==`, `!=`, `<`, `<=`, `>`, and `>=` are available
+- Logical operators `&&`, `||`, and `!` are available for boolean expressions
+- Unary `+` and unary `-` are available for numeric expressions
 - The current C backend maps Pulse `string` values to an internal `string_t` runtime struct

@@ -1,10 +1,16 @@
 import type { PrimitiveTypeName, ResolvedType } from './types.js';
 import { type TokenLocation } from '../lexer/token.js';
 import type {
+  AssignmentExpressionNode,
+  BinaryExpressionNode,
   ExpressionNode,
+  ExpressionStatementNode,
+  IdentifierExpressionNode,
   NamedTypeNode,
   ProgramNode,
+  StatementNode,
   TypeNode,
+  UnaryExpressionNode,
   VariableDeclarationNode,
 } from '../parser/ast/index.js';
 
@@ -19,6 +25,11 @@ const PRIMITIVE_TYPES: ReadonlySet<string> = new Set<PrimitiveTypeName>([
   'void',
 ]);
 
+type SymbolEntry = {
+  mutability: 'val' | 'var';
+  type: ResolvedType;
+};
+
 export class CheckerError extends Error {
   public readonly location: TokenLocation;
 
@@ -30,9 +41,17 @@ export class CheckerError extends Error {
 }
 
 export class Checker {
+  private readonly symbols: Map<string, SymbolEntry>;
+
+  public constructor() {
+    this.symbols = new Map<string, SymbolEntry>();
+  }
+
   public checkProgram(program: ProgramNode): void {
+    this.symbols.clear();
+
     for (const statement of program.body) {
-      this.checkVariableDeclaration(statement);
+      this.checkStatement(statement);
     }
   }
 
@@ -65,17 +84,120 @@ export class Checker {
       return;
     }
 
-    const expressionType: PrimitiveTypeName = this.resolveExpressionType(expression);
+    const expressionType: ResolvedType = this.resolveExpressionType(expression);
 
-    if (targetType.name !== expressionType) {
+    if (targetType.name !== expressionType.name || targetType.nullable !== expressionType.nullable) {
       throw new CheckerError(
-        `Cannot assign "${expressionType}" to "${this.stringifyType(targetType)}".`,
+        `Cannot assign "${this.stringifyType(expressionType)}" to "${this.stringifyType(targetType)}".`,
         expression.location
       );
     }
   }
 
+  private checkAssignmentExpression(expression: AssignmentExpressionNode): ResolvedType {
+    const targetSymbol: SymbolEntry = this.resolveIdentifier(expression.target);
+
+    if (targetSymbol.mutability !== 'var') {
+      throw new CheckerError(
+        `Cannot reassign immutable value "${expression.target.name}".`,
+        expression.target.location
+      );
+    }
+
+    if (expression.operator === '=') {
+      this.assertExpressionAssignable(targetSymbol.type, expression.value);
+      return targetSymbol.type;
+    }
+
+    if (!this.isNumericType(targetSymbol.type.name)) {
+      throw new CheckerError(
+        `Operator "${expression.operator}" can only be used with numeric variables.`,
+        expression.location
+      );
+    }
+
+    if (expression.operator === '%=' && !this.isModuloCompatibleType(targetSymbol.type.name)) {
+      throw new CheckerError('Operator "%=" can only be used with int and byte values.', expression.location);
+    }
+
+    this.assertExpressionAssignable(targetSymbol.type, expression.value);
+
+    return targetSymbol.type;
+  }
+
+  private checkBinaryExpression(expression: BinaryExpressionNode): ResolvedType {
+    const leftType: ResolvedType = this.resolveExpressionType(expression.left);
+    const rightType: ResolvedType = this.resolveExpressionType(expression.right);
+
+    if (leftType.nullable || rightType.nullable) {
+      throw new CheckerError('Binary operators do not support nullable operands.', expression.location);
+    }
+
+    if (leftType.name !== rightType.name) {
+      throw new CheckerError(
+        `Cannot use operator "${expression.operator}" with "${leftType.name}" and "${rightType.name}".`,
+        expression.location
+      );
+    }
+
+    if (expression.operator === '&&' || expression.operator === '||') {
+      if (leftType.name !== 'boolean') {
+        throw new CheckerError(
+          `Operator "${expression.operator}" can only be used with boolean operands.`,
+          expression.location
+        );
+      }
+
+      return { name: 'boolean', nullable: false };
+    }
+
+    if (expression.operator === '==' || expression.operator === '!=') {
+      return { name: 'boolean', nullable: false };
+    }
+
+    if (!this.isNumericType(leftType.name)) {
+      throw new CheckerError(
+        `Operator "${expression.operator}" can only be used with numeric operands.`,
+        expression.location
+      );
+    }
+
+    if (expression.operator === '%' && !this.isModuloCompatibleType(leftType.name)) {
+      throw new CheckerError('Operator "%" can only be used with int and byte values.', expression.location);
+    }
+
+    if (
+      expression.operator === '<' ||
+      expression.operator === '<=' ||
+      expression.operator === '>' ||
+      expression.operator === '>='
+    ) {
+      return { name: 'boolean', nullable: false };
+    }
+
+    return leftType;
+  }
+
+  private checkExpressionStatement(statement: ExpressionStatementNode): void {
+    this.resolveExpressionType(statement.expression);
+  }
+
+  private checkStatement(statement: StatementNode): void {
+    switch (statement.kind) {
+      case 'ExpressionStatement':
+        this.checkExpressionStatement(statement);
+        return;
+      case 'VariableDeclaration':
+        this.checkVariableDeclaration(statement);
+        return;
+    }
+  }
+
   private checkVariableDeclaration(declaration: VariableDeclarationNode): void {
+    if (this.symbols.has(declaration.name.name)) {
+      throw new CheckerError(`Variable "${declaration.name.name}" is already declared.`, declaration.name.location);
+    }
+
     const declaredType: ResolvedType = this.resolveType(declaration.type);
 
     if (declaredType.name === 'void') {
@@ -83,24 +205,52 @@ export class Checker {
     }
 
     this.assertExpressionAssignable(declaredType, declaration.initializer);
+
+    this.symbols.set(declaration.name.name, {
+      mutability: declaration.mutability,
+      type: declaredType,
+    });
   }
 
-  private resolveExpressionType(expression: ExpressionNode): PrimitiveTypeName {
+  private isModuloCompatibleType(typeName: PrimitiveTypeName): boolean {
+    return typeName === 'byte' || typeName === 'int';
+  }
+
+  private isNumericType(typeName: PrimitiveTypeName): boolean {
+    return typeName === 'byte' || typeName === 'double' || typeName === 'float' || typeName === 'int';
+  }
+
+  private resolveExpressionType(expression: ExpressionNode): ResolvedType {
     switch (expression.kind) {
+      case 'AssignmentExpression':
+        return this.checkAssignmentExpression(expression);
+      case 'BinaryExpression':
+        return this.checkBinaryExpression(expression);
       case 'BooleanLiteral':
-        return 'boolean';
+        return { name: 'boolean', nullable: false };
       case 'DoubleLiteral':
-        return 'double';
+        return { name: 'double', nullable: false };
+      case 'IdentifierExpression':
+        return this.resolveIdentifier(expression).type;
       case 'IntegerLiteral':
-        return 'int';
+        return { name: 'int', nullable: false };
       case 'StringLiteral':
-        return 'string';
+        return { name: 'string', nullable: false };
       case 'NullLiteral':
-        throw new CheckerError(
-          'Null must be handled before resolving a primitive expression type.',
-          expression.location
-        );
+        throw new CheckerError('Null must be handled before resolving an expression type.', expression.location);
+      case 'UnaryExpression':
+        return this.resolveUnaryExpressionType(expression);
     }
+  }
+
+  private resolveIdentifier(expression: IdentifierExpressionNode): SymbolEntry {
+    const symbol: SymbolEntry | undefined = this.symbols.get(expression.name);
+
+    if (symbol === undefined) {
+      throw new CheckerError(`Unknown variable "${expression.name}".`, expression.location);
+    }
+
+    return symbol;
   }
 
   private resolveNamedType(type: NamedTypeNode): PrimitiveTypeName {
@@ -123,6 +273,36 @@ export class Checker {
       name: this.resolveNamedType(type.type),
       nullable: true,
     };
+  }
+
+  private resolveUnaryExpressionType(expression: UnaryExpressionNode): ResolvedType {
+    const operandType: ResolvedType = this.resolveExpressionType(expression.expression);
+
+    if (operandType.nullable) {
+      throw new CheckerError(
+        `Operator "${expression.operator}" does not support nullable operands.`,
+        expression.location
+      );
+    }
+
+    switch (expression.operator) {
+      case '!':
+        if (operandType.name !== 'boolean') {
+          throw new CheckerError('Operator "!" can only be used with boolean operands.', expression.location);
+        }
+
+        return { name: 'boolean', nullable: false };
+      case '+':
+      case '-':
+        if (!this.isNumericType(operandType.name)) {
+          throw new CheckerError(
+            `Operator "${expression.operator}" can only be used with numeric operands.`,
+            expression.location
+          );
+        }
+
+        return operandType;
+    }
   }
 
   private stringifyType(type: ResolvedType): string {

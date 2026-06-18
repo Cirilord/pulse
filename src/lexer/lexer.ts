@@ -61,6 +61,23 @@ export class Lexer {
       this.advance();
 
       switch (character) {
+        case '&':
+          if (this.peek() === '&') {
+            this.advance();
+            tokens.push(this.createToken(TokenType.AmpersandAmpersand, startIndex, startLine, startColumn));
+            break;
+          }
+
+          throw new LexerError("Unexpected character '&'.", this.createLocation(startLine, startColumn));
+        case '!':
+          if (this.peek() === '=') {
+            this.advance();
+            tokens.push(this.createToken(TokenType.BangEqual, startIndex, startLine, startColumn));
+            break;
+          }
+
+          tokens.push(this.createToken(TokenType.Bang, startIndex, startLine, startColumn));
+          break;
         case ':':
           tokens.push(this.createToken(TokenType.Colon, startIndex, startLine, startColumn));
           break;
@@ -68,13 +85,90 @@ export class Lexer {
           tokens.push(this.createToken(TokenType.Comma, startIndex, startLine, startColumn));
           break;
         case '=':
+          if (this.peek() === '=') {
+            this.advance();
+            tokens.push(this.createToken(TokenType.EqualEqual, startIndex, startLine, startColumn));
+            break;
+          }
+
           tokens.push(this.createToken(TokenType.Equal, startIndex, startLine, startColumn));
+          break;
+        case '>':
+          if (this.peek() === '=') {
+            this.advance();
+            tokens.push(this.createToken(TokenType.GreaterThanEqual, startIndex, startLine, startColumn));
+            break;
+          }
+
+          tokens.push(this.createToken(TokenType.GreaterThan, startIndex, startLine, startColumn));
+          break;
+        case '<':
+          if (this.peek() === '=') {
+            this.advance();
+            tokens.push(this.createToken(TokenType.LessThanEqual, startIndex, startLine, startColumn));
+            break;
+          }
+
+          tokens.push(this.createToken(TokenType.LessThan, startIndex, startLine, startColumn));
+          break;
+        case '-':
+          if (this.peek() === '=') {
+            this.advance();
+            tokens.push(this.createToken(TokenType.MinusEqual, startIndex, startLine, startColumn));
+            break;
+          }
+
+          tokens.push(this.createToken(TokenType.Minus, startIndex, startLine, startColumn));
+          break;
+        case '%':
+          if (this.peek() === '=') {
+            this.advance();
+            tokens.push(this.createToken(TokenType.PercentEqual, startIndex, startLine, startColumn));
+            break;
+          }
+
+          tokens.push(this.createToken(TokenType.Percent, startIndex, startLine, startColumn));
+          break;
+        case '+':
+          if (this.peek() === '=') {
+            this.advance();
+            tokens.push(this.createToken(TokenType.PlusEqual, startIndex, startLine, startColumn));
+            break;
+          }
+
+          tokens.push(this.createToken(TokenType.Plus, startIndex, startLine, startColumn));
           break;
         case '?':
           tokens.push(this.createToken(TokenType.QuestionMark, startIndex, startLine, startColumn));
           break;
+        case '|':
+          if (this.peek() === '|') {
+            this.advance();
+            tokens.push(this.createToken(TokenType.PipePipe, startIndex, startLine, startColumn));
+            break;
+          }
+
+          throw new LexerError("Unexpected character '|'.", this.createLocation(startLine, startColumn));
+        case '/':
+          if (this.peek() === '=') {
+            this.advance();
+            tokens.push(this.createToken(TokenType.SlashEqual, startIndex, startLine, startColumn));
+            break;
+          }
+
+          tokens.push(this.createToken(TokenType.Slash, startIndex, startLine, startColumn));
+          break;
         case ';':
           tokens.push(this.createToken(TokenType.Semicolon, startIndex, startLine, startColumn));
+          break;
+        case '*':
+          if (this.peek() === '=') {
+            this.advance();
+            tokens.push(this.createToken(TokenType.StarEqual, startIndex, startLine, startColumn));
+            break;
+          }
+
+          tokens.push(this.createToken(TokenType.Star, startIndex, startLine, startColumn));
           break;
         case '(':
           tokens.push(this.createToken(TokenType.LeftParen, startIndex, startLine, startColumn));

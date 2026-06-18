@@ -1,5 +1,12 @@
 import { type TokenLocation } from '../lexer/token.js';
-import type { ExpressionNode, ProgramNode, TypeNode, VariableDeclarationNode } from '../parser/ast/index.js';
+import type {
+  ExpressionNode,
+  ExpressionStatementNode,
+  ProgramNode,
+  StatementNode,
+  TypeNode,
+  VariableDeclarationNode,
+} from '../parser/ast/index.js';
 
 export class CGeneratorError extends Error {
   public readonly location: TokenLocation;
@@ -28,7 +35,7 @@ export class CGenerator {
     lines.push('int main(void) {');
 
     for (const statement of program.body) {
-      lines.push(`  ${this.generateVariableDeclaration(statement)}`);
+      lines.push(`  ${this.generateStatement(statement)}`);
     }
 
     lines.push('  return 0;');
@@ -39,16 +46,37 @@ export class CGenerator {
 
   private generateExpression(expression: ExpressionNode): string {
     switch (expression.kind) {
+      case 'AssignmentExpression':
+        return `${expression.target.name} ${expression.operator} ${this.generateExpression(expression.value)}`;
+      case 'BinaryExpression':
+        return `(${this.generateExpression(expression.left)} ${expression.operator} ${this.generateExpression(expression.right)})`;
       case 'BooleanLiteral':
         return expression.value ? 'true' : 'false';
       case 'DoubleLiteral':
         return String(expression.value);
+      case 'IdentifierExpression':
+        return expression.name;
       case 'IntegerLiteral':
         return String(expression.value);
       case 'NullLiteral':
         return 'NULL';
       case 'StringLiteral':
         return JSON.stringify(expression.value);
+      case 'UnaryExpression':
+        return `(${expression.operator}${this.generateExpression(expression.expression)})`;
+    }
+  }
+
+  private generateExpressionStatement(statement: ExpressionStatementNode): string {
+    return `${this.generateExpression(statement.expression)};`;
+  }
+
+  private generateStatement(statement: StatementNode): string {
+    switch (statement.kind) {
+      case 'ExpressionStatement':
+        return this.generateExpressionStatement(statement);
+      case 'VariableDeclaration':
+        return this.generateVariableDeclaration(statement);
     }
   }
 
@@ -98,8 +126,12 @@ export class CGenerator {
   }
 
   private usesStringType(program: ProgramNode): boolean {
-    return program.body.some(function isStringDeclaration(statement: VariableDeclarationNode): boolean {
-      return statement.type.kind === 'NamedType' && statement.type.name === 'string';
+    return program.body.some(function isStringDeclaration(statement: StatementNode): boolean {
+      return (
+        statement.kind === 'VariableDeclaration' &&
+        statement.type.kind === 'NamedType' &&
+        statement.type.name === 'string'
+      );
     });
   }
 }

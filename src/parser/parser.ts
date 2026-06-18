@@ -1,13 +1,21 @@
 import { TokenType } from '../lexer/token-type.js';
 import type { Token, TokenLocation } from '../lexer/token.js';
 import type {
+  AssignmentExpressionNode,
+  AssignmentOperator,
+  BinaryExpressionNode,
+  BinaryOperator,
   ExpressionNode,
+  ExpressionStatementNode,
   IdentifierNode,
+  IdentifierExpressionNode,
   NamedTypeNode,
   NullableTypeNode,
   ProgramNode,
   StatementNode,
   TypeNode,
+  UnaryExpressionNode,
+  UnaryOperator,
   VariableDeclarationNode,
 } from './ast/index.js';
 
@@ -72,6 +80,14 @@ export class Parser {
     throw new ParserError(message, this.peek().location);
   }
 
+  private createIdentifierExpressionNode(token: Token): IdentifierExpressionNode {
+    return {
+      kind: 'IdentifierExpression',
+      location: token.location,
+      name: token.lexeme,
+    };
+  }
+
   private createIdentifierNode(token: Token): IdentifierNode {
     return {
       kind: 'Identifier',
@@ -114,7 +130,235 @@ export class Parser {
     };
   }
 
+  private parseAdditiveExpression(): ExpressionNode {
+    let expression: ExpressionNode = this.parseMultiplicativeExpression();
+
+    while (this.match(TokenType.Plus, TokenType.Minus)) {
+      const operatorToken: Token = this.previous();
+      const rightExpression: ExpressionNode = this.parseMultiplicativeExpression();
+      const binaryExpression: BinaryExpressionNode = {
+        kind: 'BinaryExpression',
+        left: expression,
+        location: this.mergeLocations(expression.location, rightExpression.location),
+        operator: this.parseBinaryOperator(operatorToken),
+        right: rightExpression,
+      };
+
+      expression = binaryExpression;
+    }
+
+    return expression;
+  }
+
+  private parseAssignmentExpression(): ExpressionNode {
+    const leftExpression: ExpressionNode = this.parseLogicalOrExpression();
+
+    if (
+      !this.match(
+        TokenType.Equal,
+        TokenType.PlusEqual,
+        TokenType.MinusEqual,
+        TokenType.StarEqual,
+        TokenType.SlashEqual,
+        TokenType.PercentEqual
+      )
+    ) {
+      return leftExpression;
+    }
+
+    const operatorToken: Token = this.previous();
+
+    if (leftExpression.kind !== 'IdentifierExpression') {
+      throw new ParserError('Expected an identifier on the left side of an assignment.', leftExpression.location);
+    }
+
+    const valueExpression: ExpressionNode = this.parseAssignmentExpression();
+    const operator: AssignmentOperator = this.parseAssignmentOperator(operatorToken);
+    const assignmentExpression: AssignmentExpressionNode = {
+      kind: 'AssignmentExpression',
+      location: this.mergeLocations(leftExpression.location, valueExpression.location),
+      operator,
+      target: leftExpression,
+      value: valueExpression,
+    };
+
+    return assignmentExpression;
+  }
+
+  private parseAssignmentOperator(token: Token): AssignmentOperator {
+    switch (token.type) {
+      case TokenType.Equal:
+        return '=';
+      case TokenType.MinusEqual:
+        return '-=';
+      case TokenType.PercentEqual:
+        return '%=';
+      case TokenType.PlusEqual:
+        return '+=';
+      case TokenType.SlashEqual:
+        return '/=';
+      case TokenType.StarEqual:
+        return '*=';
+      default:
+        throw new ParserError('Expected an assignment operator.', token.location);
+    }
+  }
+
+  private parseBinaryOperator(token: Token): BinaryOperator {
+    switch (token.type) {
+      case TokenType.AmpersandAmpersand:
+        return '&&';
+      case TokenType.BangEqual:
+        return '!=';
+      case TokenType.EqualEqual:
+        return '==';
+      case TokenType.GreaterThan:
+        return '>';
+      case TokenType.GreaterThanEqual:
+        return '>=';
+      case TokenType.LessThan:
+        return '<';
+      case TokenType.LessThanEqual:
+        return '<=';
+      case TokenType.Minus:
+        return '-';
+      case TokenType.Percent:
+        return '%';
+      case TokenType.PipePipe:
+        return '||';
+      case TokenType.Plus:
+        return '+';
+      case TokenType.Slash:
+        return '/';
+      case TokenType.Star:
+        return '*';
+      default:
+        throw new ParserError('Expected a binary operator.', token.location);
+    }
+  }
+
+  private parseComparisonExpression(): ExpressionNode {
+    let expression: ExpressionNode = this.parseAdditiveExpression();
+
+    while (this.match(TokenType.GreaterThan, TokenType.GreaterThanEqual, TokenType.LessThan, TokenType.LessThanEqual)) {
+      const operatorToken: Token = this.previous();
+      const rightExpression: ExpressionNode = this.parseAdditiveExpression();
+      const binaryExpression: BinaryExpressionNode = {
+        kind: 'BinaryExpression',
+        left: expression,
+        location: this.mergeLocations(expression.location, rightExpression.location),
+        operator: this.parseBinaryOperator(operatorToken),
+        right: rightExpression,
+      };
+
+      expression = binaryExpression;
+    }
+
+    return expression;
+  }
+
+  private parseEqualityExpression(): ExpressionNode {
+    let expression: ExpressionNode = this.parseComparisonExpression();
+
+    while (this.match(TokenType.EqualEqual, TokenType.BangEqual)) {
+      const operatorToken: Token = this.previous();
+      const rightExpression: ExpressionNode = this.parseComparisonExpression();
+      const binaryExpression: BinaryExpressionNode = {
+        kind: 'BinaryExpression',
+        left: expression,
+        location: this.mergeLocations(expression.location, rightExpression.location),
+        operator: this.parseBinaryOperator(operatorToken),
+        right: rightExpression,
+      };
+
+      expression = binaryExpression;
+    }
+
+    return expression;
+  }
+
   private parseExpression(): ExpressionNode {
+    return this.parseAssignmentExpression();
+  }
+
+  private parseExpressionStatement(): ExpressionStatementNode {
+    const expression: ExpressionNode = this.parseExpression();
+    const semicolonToken: Token = this.consume(TokenType.Semicolon, 'Expected ";" after the expression.');
+
+    return {
+      expression,
+      kind: 'ExpressionStatement',
+      location: this.mergeLocations(expression.location, semicolonToken.location),
+    };
+  }
+
+  private parseLogicalAndExpression(): ExpressionNode {
+    let expression: ExpressionNode = this.parseEqualityExpression();
+
+    while (this.match(TokenType.AmpersandAmpersand)) {
+      const operatorToken: Token = this.previous();
+      const rightExpression: ExpressionNode = this.parseEqualityExpression();
+      const binaryExpression: BinaryExpressionNode = {
+        kind: 'BinaryExpression',
+        left: expression,
+        location: this.mergeLocations(expression.location, rightExpression.location),
+        operator: this.parseBinaryOperator(operatorToken),
+        right: rightExpression,
+      };
+
+      expression = binaryExpression;
+    }
+
+    return expression;
+  }
+
+  private parseLogicalOrExpression(): ExpressionNode {
+    let expression: ExpressionNode = this.parseLogicalAndExpression();
+
+    while (this.match(TokenType.PipePipe)) {
+      const operatorToken: Token = this.previous();
+      const rightExpression: ExpressionNode = this.parseLogicalAndExpression();
+      const binaryExpression: BinaryExpressionNode = {
+        kind: 'BinaryExpression',
+        left: expression,
+        location: this.mergeLocations(expression.location, rightExpression.location),
+        operator: this.parseBinaryOperator(operatorToken),
+        right: rightExpression,
+      };
+
+      expression = binaryExpression;
+    }
+
+    return expression;
+  }
+
+  private parseMultiplicativeExpression(): ExpressionNode {
+    let expression: ExpressionNode = this.parseUnaryExpression();
+
+    while (this.match(TokenType.Star, TokenType.Slash, TokenType.Percent)) {
+      const operatorToken: Token = this.previous();
+      const rightExpression: ExpressionNode = this.parseUnaryExpression();
+      const binaryExpression: BinaryExpressionNode = {
+        kind: 'BinaryExpression',
+        left: expression,
+        location: this.mergeLocations(expression.location, rightExpression.location),
+        operator: this.parseBinaryOperator(operatorToken),
+        right: rightExpression,
+      };
+
+      expression = binaryExpression;
+    }
+
+    return expression;
+  }
+
+  private parsePrimaryExpression(): ExpressionNode {
+    if (this.match(TokenType.Identifier)) {
+      const token: Token = this.previous();
+
+      return this.createIdentifierExpressionNode(token);
+    }
+
     if (this.match(TokenType.True, TokenType.False)) {
       const token: Token = this.previous();
 
@@ -172,7 +416,7 @@ export class Parser {
       return this.parseVariableDeclaration(this.previous());
     }
 
-    throw new ParserError('Expected a statement.', this.peek().location);
+    return this.parseExpressionStatement();
   }
 
   private parseType(): TypeNode {
@@ -191,6 +435,36 @@ export class Parser {
     };
 
     return nullableType;
+  }
+
+  private parseUnaryExpression(): ExpressionNode {
+    if (this.match(TokenType.Bang, TokenType.Minus, TokenType.Plus)) {
+      const operatorToken: Token = this.previous();
+      const expression: ExpressionNode = this.parseUnaryExpression();
+      const unaryExpression: UnaryExpressionNode = {
+        expression,
+        kind: 'UnaryExpression',
+        location: this.mergeLocations(operatorToken.location, expression.location),
+        operator: this.parseUnaryOperator(operatorToken),
+      };
+
+      return unaryExpression;
+    }
+
+    return this.parsePrimaryExpression();
+  }
+
+  private parseUnaryOperator(token: Token): UnaryOperator {
+    switch (token.type) {
+      case TokenType.Bang:
+        return '!';
+      case TokenType.Minus:
+        return '-';
+      case TokenType.Plus:
+        return '+';
+      default:
+        throw new ParserError('Expected a unary operator.', token.location);
+    }
   }
 
   private parseVariableDeclaration(mutabilityToken: Token): VariableDeclarationNode {
