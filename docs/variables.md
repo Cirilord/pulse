@@ -45,4 +45,5 @@ val alias = null;
 - Comparison operators `==`, `!=`, `<`, `<=`, `>`, and `>=` are available
 - Logical operators `&&`, `||`, and `!` are available for boolean expressions
 - Unary `+` and unary `-` are available for numeric expressions
+- Parentheses can be used to group expressions and control precedence
 - The current C backend maps Pulse `string` values to an internal `string_t` runtime struct

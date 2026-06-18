@@ -36,6 +36,11 @@ export type DoubleLiteralNode = BaseNode & {
   value: number;
 };
 
+export type GroupingExpressionNode = BaseNode & {
+  expression: ExpressionNode;
+  kind: 'GroupingExpression';
+};
+
 export type IdentifierExpressionNode = BaseNode & {
   kind: 'IdentifierExpression';
   name: string;
@@ -60,6 +65,7 @@ export type ExpressionNode =
   | BinaryExpressionNode
   | BooleanLiteralNode
   | DoubleLiteralNode
+  | GroupingExpressionNode
   | IdentifierExpressionNode
   | IntegerLiteralNode
   | NullLiteralNode

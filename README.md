@@ -15,7 +15,7 @@ This README should be kept up to date as the project evolves.
 - A basic semantic checker is available in `src/checker`
 - A basic C generator is available in `src/codegen`
 - A basic native compilation runner is available in `src/compiler`
-- The compiler currently supports identifier references, unary expressions, arithmetic, comparisons, logical expressions, and compound assignment statements
+- The compiler currently supports identifier references, grouping with parentheses, unary expressions, arithmetic, comparisons, logical expressions, and compound assignment statements
 - The `compile` command currently reads the input file, tokenizes it, parses it, checks it, generates C, and compiles it with `clang` or `gcc`
 - The generated C currently maps Pulse `string` values to an internal `string_t` runtime struct
 

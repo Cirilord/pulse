@@ -359,6 +359,18 @@ export class Parser {
       return this.createIdentifierExpressionNode(token);
     }
 
+    if (this.match(TokenType.LeftParen)) {
+      const leftParenToken: Token = this.previous();
+      const expression: ExpressionNode = this.parseExpression();
+      const rightParenToken: Token = this.consume(TokenType.RightParen, 'Expected ")" after the expression.');
+
+      return {
+        expression,
+        kind: 'GroupingExpression',
+        location: this.mergeLocations(leftParenToken.location, rightParenToken.location),
+      };
+    }
+
     if (this.match(TokenType.True, TokenType.False)) {
       const token: Token = this.previous();
 

@@ -230,6 +230,8 @@ export class Checker {
         return { name: 'boolean', nullable: false };
       case 'DoubleLiteral':
         return { name: 'double', nullable: false };
+      case 'GroupingExpression':
+        return this.resolveExpressionType(expression.expression);
       case 'IdentifierExpression':
         return this.resolveIdentifier(expression).type;
       case 'IntegerLiteral':

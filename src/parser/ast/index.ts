@@ -7,6 +7,7 @@ export type {
   BooleanLiteralNode,
   DoubleLiteralNode,
   ExpressionNode,
+  GroupingExpressionNode,
   IdentifierExpressionNode,
   IntegerLiteralNode,
   NullLiteralNode,

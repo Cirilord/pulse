@@ -54,6 +54,8 @@ export class CGenerator {
         return expression.value ? 'true' : 'false';
       case 'DoubleLiteral':
         return String(expression.value);
+      case 'GroupingExpression':
+        return `(${this.generateExpression(expression.expression)})`;
       case 'IdentifierExpression':
         return expression.name;
       case 'IntegerLiteral':
