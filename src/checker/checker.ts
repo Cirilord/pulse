@@ -11,10 +11,12 @@ import type {
 const PRIMITIVE_TYPES: ReadonlySet<string> = new Set<PrimitiveTypeName>([
   'boolean',
   'byte',
+  'char',
   'double',
   'float',
   'int',
   'string',
+  'void',
 ]);
 
 export class CheckerError extends Error {
@@ -55,6 +57,14 @@ export class Checker {
       return;
     }
 
+    if (targetType.name === 'char' && expression.kind === 'StringLiteral') {
+      if (expression.value.length !== 1) {
+        throw new CheckerError('Char values must contain exactly one character.', expression.location);
+      }
+
+      return;
+    }
+
     const expressionType: PrimitiveTypeName = this.resolveExpressionType(expression);
 
     if (targetType.name !== expressionType) {
@@ -67,6 +77,10 @@ export class Checker {
 
   private checkVariableDeclaration(declaration: VariableDeclarationNode): void {
     const declaredType: ResolvedType = this.resolveType(declaration.type);
+
+    if (declaredType.name === 'void') {
+      throw new CheckerError('Variables cannot use the void type.', declaration.type.location);
+    }
 
     this.assertExpressionAssignable(declaredType, declaration.initializer);
   }

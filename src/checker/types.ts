@@ -1,4 +1,4 @@
-export type PrimitiveTypeName = 'boolean' | 'byte' | 'double' | 'float' | 'int' | 'string';
+export type PrimitiveTypeName = 'boolean' | 'byte' | 'char' | 'double' | 'float' | 'int' | 'string' | 'void';
 
 export type ResolvedType = {
   name: PrimitiveTypeName;

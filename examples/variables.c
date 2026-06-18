@@ -8,5 +8,6 @@ int main(void) {
   const double d = 42.5;
   bool e = true;
   const float f = 12.25f;
+  const char g = 'Z';
   return 0;
 }

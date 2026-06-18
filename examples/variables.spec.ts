@@ -175,7 +175,34 @@ describe('variables example', function describeVariablesExample(): void {
         location: { end: { column: 22, line: 6 }, start: { column: 21, line: 6 } },
         type: TokenType.Semicolon,
       },
-      { lexeme: '', location: { end: { column: 1, line: 7 }, start: { column: 1, line: 7 } }, type: TokenType.EOF },
+      { lexeme: 'val', location: { end: { column: 4, line: 7 }, start: { column: 1, line: 7 } }, type: TokenType.Val },
+      {
+        lexeme: 'g',
+        location: { end: { column: 6, line: 7 }, start: { column: 5, line: 7 } },
+        type: TokenType.Identifier,
+      },
+      { lexeme: ':', location: { end: { column: 7, line: 7 }, start: { column: 6, line: 7 } }, type: TokenType.Colon },
+      {
+        lexeme: 'char',
+        location: { end: { column: 12, line: 7 }, start: { column: 8, line: 7 } },
+        type: TokenType.Identifier,
+      },
+      {
+        lexeme: '=',
+        location: { end: { column: 14, line: 7 }, start: { column: 13, line: 7 } },
+        type: TokenType.Equal,
+      },
+      {
+        lexeme: '"Z"',
+        location: { end: { column: 18, line: 7 }, start: { column: 15, line: 7 } },
+        type: TokenType.StringLiteral,
+      },
+      {
+        lexeme: ';',
+        location: { end: { column: 19, line: 7 }, start: { column: 18, line: 7 } },
+        type: TokenType.Semicolon,
+      },
+      { lexeme: '', location: { end: { column: 1, line: 8 }, start: { column: 1, line: 8 } }, type: TokenType.EOF },
     ]);
   });
 
@@ -306,9 +333,29 @@ describe('variables example', function describeVariablesExample(): void {
             name: 'float',
           },
         },
+        {
+          initializer: {
+            kind: 'StringLiteral',
+            location: { end: { column: 18, line: 7 }, start: { column: 15, line: 7 } },
+            value: 'Z',
+          },
+          kind: 'VariableDeclaration',
+          location: { end: { column: 19, line: 7 }, start: { column: 1, line: 7 } },
+          mutability: 'val',
+          name: {
+            kind: 'Identifier',
+            location: { end: { column: 6, line: 7 }, start: { column: 5, line: 7 } },
+            name: 'g',
+          },
+          type: {
+            kind: 'NamedType',
+            location: { end: { column: 12, line: 7 }, start: { column: 8, line: 7 } },
+            name: 'char',
+          },
+        },
       ],
       kind: 'Program',
-      location: { end: { column: 1, line: 7 }, start: { column: 1, line: 1 } },
+      location: { end: { column: 1, line: 8 }, start: { column: 1, line: 1 } },
     });
   });
 
@@ -352,6 +399,28 @@ describe('variables example', function describeVariablesExample(): void {
     const checker: Checker = new Checker();
 
     expect(function checkInvalidByteLiteral(): void {
+      checker.checkProgram(parser.parseProgram());
+    }).toThrow(CheckerError);
+  });
+
+  test('rejects void as a variable type', function testVoidVariableType(): void {
+    const sourceCode = 'val nothing: void = null;';
+    const lexer: Lexer = new Lexer(sourceCode);
+    const parser: Parser = new Parser(lexer.tokenize());
+    const checker: Checker = new Checker();
+
+    expect(function checkVoidVariableDeclaration(): void {
+      checker.checkProgram(parser.parseProgram());
+    }).toThrow(CheckerError);
+  });
+
+  test('rejects char values with more than one character', function testInvalidCharLength(): void {
+    const sourceCode = 'val initial: char = "AB";';
+    const lexer: Lexer = new Lexer(sourceCode);
+    const parser: Parser = new Parser(lexer.tokenize());
+    const checker: Checker = new Checker();
+
+    expect(function checkInvalidCharValue(): void {
       checker.checkProgram(parser.parseProgram());
     }).toThrow(CheckerError);
   });

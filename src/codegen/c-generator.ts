@@ -50,6 +50,8 @@ export class CGenerator {
         return mutability === 'val' ? 'const bool' : 'bool';
       case 'byte':
         return mutability === 'val' ? 'const unsigned char' : 'unsigned char';
+      case 'char':
+        return mutability === 'val' ? 'const char' : 'char';
       case 'double':
         return mutability === 'val' ? 'const double' : 'double';
       case 'float':
@@ -67,10 +69,14 @@ export class CGenerator {
     const cType: string = this.generateType(declaration.type, declaration.mutability);
     const initializer: string =
       declaration.type.kind === 'NamedType' &&
-      declaration.type.name === 'float' &&
-      declaration.initializer.kind === 'DoubleLiteral'
-        ? `${this.generateExpression(declaration.initializer)}f`
-        : this.generateExpression(declaration.initializer);
+      declaration.type.name === 'char' &&
+      declaration.initializer.kind === 'StringLiteral'
+        ? `'${declaration.initializer.value}'`
+        : declaration.type.kind === 'NamedType' &&
+            declaration.type.name === 'float' &&
+            declaration.initializer.kind === 'DoubleLiteral'
+          ? `${this.generateExpression(declaration.initializer)}f`
+          : this.generateExpression(declaration.initializer);
 
     return `${cType} ${declaration.name.name} = ${initializer};`;
   }
