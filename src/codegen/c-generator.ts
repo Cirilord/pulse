@@ -28,15 +28,46 @@ export class CGenerator {
   }
 
   public generateProgram(program: ProgramNode): string {
-    const lines: string[] = ['#include <stdbool.h>', '#include <stddef.h>', ''];
+    this.variableTypes.clear();
 
-    if (this.usesStringType(program)) {
+    for (const statement of program.body) {
+      if (statement.kind === 'VariableDeclaration') {
+        this.variableTypes.set(statement.name.name, statement.type);
+      }
+    }
+
+    const usesStringType: boolean = this.usesStringType(program);
+    const usesStringEquality: boolean = this.usesStringEquality(program);
+    const lines: string[] = ['#include <stdbool.h>', '#include <stddef.h>'];
+
+    if (usesStringEquality) {
+      lines.push('#include <string.h>');
+    }
+
+    lines.push('');
+
+    if (usesStringType) {
       lines.push('typedef struct {');
       lines.push('  size_t length;');
       lines.push('  const char *data;');
       lines.push('} string_t;');
       lines.push('');
       lines.push('#define STRING_LITERAL(value) ((string_t){ sizeof(value) - 1, value })');
+      lines.push('');
+    }
+
+    if (usesStringEquality) {
+      lines.push('static bool string_t_equal(const string_t left, const string_t right) {');
+      lines.push('  if (left.length != right.length) {');
+      lines.push('    return false;');
+      lines.push('  }');
+      lines.push('');
+      lines.push('  if (left.length == 0) {');
+      lines.push('    return true;');
+      lines.push('  }');
+      lines.push('');
+      lines.push('  return memcmp(left.data, right.data, left.length) == 0;');
+      lines.push('}');
       lines.push('');
     }
 
@@ -47,8 +78,6 @@ export class CGenerator {
       lines.push(`} ${this.getNullableCType(nullableTypeName)};`);
       lines.push('');
     }
-
-    this.variableTypes.clear();
 
     lines.push('int main(void) {');
 
@@ -72,6 +101,38 @@ export class CGenerator {
     }
 
     return [...typeNames].sort();
+  }
+
+  private expressionUsesStringEquality(expression: ExpressionNode): boolean {
+    switch (expression.kind) {
+      case 'AssignmentExpression':
+        return this.expressionUsesStringEquality(expression.value);
+      case 'BinaryExpression':
+        if (expression.operator === '==' || expression.operator === '!=') {
+          return this.isStringEquality(expression);
+        }
+
+        return (
+          this.expressionUsesStringEquality(expression.left) || this.expressionUsesStringEquality(expression.right)
+        );
+      case 'ConditionalExpression':
+        return (
+          this.expressionUsesStringEquality(expression.condition) ||
+          this.expressionUsesStringEquality(expression.thenExpression) ||
+          this.expressionUsesStringEquality(expression.elseExpression)
+        );
+      case 'GroupingExpression':
+        return this.expressionUsesStringEquality(expression.expression);
+      case 'UnaryExpression':
+        return this.expressionUsesStringEquality(expression.expression);
+      case 'BooleanLiteral':
+      case 'DoubleLiteral':
+      case 'IdentifierExpression':
+      case 'IntegerLiteral':
+      case 'NullLiteral':
+      case 'StringLiteral':
+        return false;
+    }
   }
 
   private generateAssignedValue(type: TypeNode, expression: ExpressionNode): string {
@@ -105,6 +166,56 @@ export class CGenerator {
     return `(${conditionExpression} ? ${thenExpression} : ${elseExpression})`;
   }
 
+  private generateEqualityExpression(expression: BinaryExpressionNode): string {
+    if (expression.left.kind === 'NullLiteral' && expression.right.kind === 'NullLiteral') {
+      return expression.operator === '==' ? 'true' : 'false';
+    }
+
+    if (expression.left.kind === 'NullLiteral') {
+      const rightType: TypeNode = this.resolveExpressionType(expression.right);
+
+      if (rightType.kind !== 'NullableType') {
+        throw new CGeneratorError('Null equality requires a nullable operand.', expression.location);
+      }
+
+      const rightExpression: string = this.generateExpression(expression.right);
+
+      return expression.operator === '==' ? `(${rightExpression}.is_null)` : `(!${rightExpression}.is_null)`;
+    }
+
+    if (expression.right.kind === 'NullLiteral') {
+      const leftType: TypeNode = this.resolveExpressionType(expression.left);
+
+      if (leftType.kind !== 'NullableType') {
+        throw new CGeneratorError('Null equality requires a nullable operand.', expression.location);
+      }
+
+      const leftExpression: string = this.generateExpression(expression.left);
+
+      return expression.operator === '==' ? `(${leftExpression}.is_null)` : `(!${leftExpression}.is_null)`;
+    }
+
+    const leftType: TypeNode = this.resolveExpressionType(expression.left);
+    const rightType: TypeNode = this.resolveExpressionType(expression.right);
+
+    if (leftType.kind === 'NullableType' || rightType.kind === 'NullableType') {
+      return this.generateNullableEqualityExpression(expression, leftType, rightType);
+    }
+
+    if (
+      leftType.kind === 'NamedType' &&
+      leftType.name === 'string' &&
+      rightType.kind === 'NamedType' &&
+      rightType.name === 'string'
+    ) {
+      return `(string_t_equal(${this.generateExpression(expression.left)}, ${this.generateExpression(expression.right)})${
+        expression.operator === '!=' ? ' == false' : ''
+      })`;
+    }
+
+    return `(${this.generateExpression(expression.left)} ${expression.operator} ${this.generateExpression(expression.right)})`;
+  }
+
   private generateExpression(expression: ExpressionNode): string {
     switch (expression.kind) {
       case 'AssignmentExpression':
@@ -123,6 +234,10 @@ export class CGenerator {
       case 'BinaryExpression':
         if (expression.operator === '??') {
           return this.generateNullCoalescingExpression(expression);
+        }
+
+        if (expression.operator === '==' || expression.operator === '!=') {
+          return this.generateEqualityExpression(expression);
         }
 
         return `(${this.generateExpression(expression.left)} ${expression.operator} ${this.generateExpression(expression.right)})`;
@@ -216,6 +331,30 @@ export class CGenerator {
     return `(${leftExpression}.is_null ? ${rightExpression} : ${leftExpression}.value)`;
   }
 
+  private generateNullableEqualityExpression(
+    expression: BinaryExpressionNode,
+    leftType: TypeNode,
+    rightType: TypeNode
+  ): string {
+    if (leftType.kind !== 'NullableType' || rightType.kind !== 'NullableType') {
+      throw new CGeneratorError('Nullable equality requires nullable operands.', expression.location);
+    }
+
+    const leftExpression: string = this.generateExpression(expression.left);
+    const rightExpression: string = this.generateExpression(expression.right);
+    const valueExpression: string =
+      leftType.type.name === 'string'
+        ? `string_t_equal(${leftExpression}.value, ${rightExpression}.value)`
+        : `${leftExpression}.value == ${rightExpression}.value`;
+    const equalityExpression: string = `(${leftExpression}.is_null ? ${rightExpression}.is_null : (!${rightExpression}.is_null && ${valueExpression}))`;
+
+    if (expression.operator === '!=') {
+      return `(!${equalityExpression})`;
+    }
+
+    return equalityExpression;
+  }
+
   private generateStatement(statement: StatementNode): string {
     switch (statement.kind) {
       case 'ExpressionStatement':
@@ -304,6 +443,28 @@ export class CGenerator {
     return `${this.getNonNullableCType(typeName)}_nullable`;
   }
 
+  private isStringEquality(expression: BinaryExpressionNode): boolean {
+    if (expression.left.kind === 'NullLiteral' || expression.right.kind === 'NullLiteral') {
+      const nonNullSide: ExpressionNode = expression.left.kind === 'NullLiteral' ? expression.right : expression.left;
+      const nonNullType: TypeNode = this.resolveExpressionType(nonNullSide);
+
+      return (
+        (nonNullType.kind === 'NullableType' && nonNullType.type.name === 'string') ||
+        (nonNullType.kind === 'NamedType' && nonNullType.name === 'string')
+      );
+    }
+
+    const leftType: TypeNode = this.resolveExpressionType(expression.left);
+    const rightType: TypeNode = this.resolveExpressionType(expression.right);
+
+    return (
+      ((leftType.kind === 'NullableType' && leftType.type.name === 'string') ||
+        (leftType.kind === 'NamedType' && leftType.name === 'string')) &&
+      ((rightType.kind === 'NullableType' && rightType.type.name === 'string') ||
+        (rightType.kind === 'NamedType' && rightType.name === 'string'))
+    );
+  }
+
   private resolveConditionalExpressionType(expression: ConditionalExpressionNode): TypeNode {
     if (expression.thenExpression.kind === 'NullLiteral' && expression.elseExpression.kind === 'NullLiteral') {
       throw new CGeneratorError('Conditional expressions cannot use null in both branches.', expression.location);
@@ -327,6 +488,19 @@ export class CGenerator {
       case 'BinaryExpression':
         if (expression.operator === '??') {
           return this.resolveNullCoalescingType(expression);
+        }
+
+        if (
+          expression.operator === '&&' ||
+          expression.operator === '||' ||
+          expression.operator === '==' ||
+          expression.operator === '!=' ||
+          expression.operator === '<' ||
+          expression.operator === '<=' ||
+          expression.operator === '>' ||
+          expression.operator === '>='
+        ) {
+          return { kind: 'NamedType', location: expression.location, name: 'boolean' };
         }
 
         return this.resolveNonNullableTypeNode(expression.left);
@@ -391,6 +565,16 @@ export class CGenerator {
     }
 
     return typeNode;
+  }
+
+  private usesStringEquality(program: ProgramNode): boolean {
+    return program.body.some((statement: StatementNode): boolean => {
+      if (statement.kind === 'ExpressionStatement') {
+        return this.expressionUsesStringEquality(statement.expression);
+      }
+
+      return this.expressionUsesStringEquality(statement.initializer);
+    });
   }
 
   private usesStringType(program: ProgramNode): boolean {

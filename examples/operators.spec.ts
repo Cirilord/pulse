@@ -34,7 +34,7 @@ describe('operators example', function describeOperatorsExample(): void {
     expect(tokens).toContainEqual({ lexeme: ':', type: TokenType.Colon });
   });
 
-  test('parses comparison, logical, and unary expressions', async function testParserOutput(): Promise<void> {
+  test('parses comparison, logical, unary, and nullable equality expressions', async function testParserOutput(): Promise<void> {
     const sourceCode: string = await readFile(new URL('./operators.p', import.meta.url), 'utf8');
     const lexer: Lexer = new Lexer(sourceCode);
     const parser: Parser = new Parser(lexer.tokenize());
@@ -84,6 +84,20 @@ describe('operators example', function describeOperatorsExample(): void {
     });
 
     expect(program.body[16]).toMatchObject({
+      initializer: {
+        kind: 'BinaryExpression',
+        operator: '==',
+      },
+    });
+
+    expect(program.body[19]).toMatchObject({
+      initializer: {
+        kind: 'BinaryExpression',
+        operator: '==',
+      },
+    });
+
+    expect(program.body[22]).toMatchObject({
       expression: {
         kind: 'AssignmentExpression',
         operator: '??=',
@@ -91,7 +105,7 @@ describe('operators example', function describeOperatorsExample(): void {
       kind: 'ExpressionStatement',
     });
 
-    expect(program.body[17]).toMatchObject({
+    expect(program.body[23]).toMatchObject({
       initializer: {
         kind: 'BinaryExpression',
         operator: '??',
@@ -128,6 +142,28 @@ describe('operators example', function describeOperatorsExample(): void {
     const checker: Checker = new Checker();
 
     expect(function checkInvalidComparisonProgram(): void {
+      checker.checkProgram(parser.parseProgram());
+    }).toThrow(CheckerError);
+  });
+
+  test('rejects ordered comparisons with nullable operands', function testInvalidNullableOrderedComparison(): void {
+    const sourceCode = 'var left: int? = null; var right: int? = null; val invalid: boolean = left < right;';
+    const lexer: Lexer = new Lexer(sourceCode);
+    const parser: Parser = new Parser(lexer.tokenize());
+    const checker: Checker = new Checker();
+
+    expect(function checkInvalidNullableOrderedComparisonProgram(): void {
+      checker.checkProgram(parser.parseProgram());
+    }).toThrow(CheckerError);
+  });
+
+  test('rejects equality between nullable and non-nullable operands', function testInvalidNullableEqualityOperands(): void {
+    const sourceCode = 'var left: int? = null; val invalid: boolean = left == 1;';
+    const lexer: Lexer = new Lexer(sourceCode);
+    const parser: Parser = new Parser(lexer.tokenize());
+    const checker: Checker = new Checker();
+
+    expect(function checkInvalidNullableEqualityOperandsProgram(): void {
       checker.checkProgram(parser.parseProgram());
     }).toThrow(CheckerError);
   });

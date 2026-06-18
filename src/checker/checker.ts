@@ -186,6 +186,10 @@ export class Checker {
       return this.resolveNullCoalescingExpressionType(expression);
     }
 
+    if (expression.operator === '==' || expression.operator === '!=') {
+      return this.resolveEqualityExpressionType(expression);
+    }
+
     const leftType: ResolvedType = this.resolveExpressionType(expression.left);
     const rightType: ResolvedType = this.resolveExpressionType(expression.right);
 
@@ -208,10 +212,6 @@ export class Checker {
         );
       }
 
-      return { name: 'boolean', nullable: false };
-    }
-
-    if (expression.operator === '==' || expression.operator === '!=') {
       return { name: 'boolean', nullable: false };
     }
 
@@ -358,6 +358,44 @@ export class Checker {
 
   private isNumericType(typeName: PrimitiveTypeName): boolean {
     return typeName === 'byte' || typeName === 'double' || typeName === 'float' || typeName === 'int';
+  }
+
+  private resolveEqualityExpressionType(expression: BinaryExpressionNode): ResolvedType {
+    if (expression.left.kind === 'NullLiteral' && expression.right.kind === 'NullLiteral') {
+      return { name: 'boolean', nullable: false };
+    }
+
+    if (expression.left.kind === 'NullLiteral') {
+      const rightType: ResolvedType = this.resolveExpressionType(expression.right);
+
+      if (!rightType.nullable) {
+        throw new CheckerError(`Cannot compare "${this.stringifyType(rightType)}" with "null".`, expression.location);
+      }
+
+      return { name: 'boolean', nullable: false };
+    }
+
+    if (expression.right.kind === 'NullLiteral') {
+      const leftType: ResolvedType = this.resolveExpressionType(expression.left);
+
+      if (!leftType.nullable) {
+        throw new CheckerError(`Cannot compare "${this.stringifyType(leftType)}" with "null".`, expression.location);
+      }
+
+      return { name: 'boolean', nullable: false };
+    }
+
+    const leftType: ResolvedType = this.resolveExpressionType(expression.left);
+    const rightType: ResolvedType = this.resolveExpressionType(expression.right);
+
+    if (leftType.name !== rightType.name || leftType.nullable !== rightType.nullable) {
+      throw new CheckerError(
+        `Cannot use operator "${expression.operator}" with "${this.stringifyType(leftType)}" and "${this.stringifyType(rightType)}".`,
+        expression.location
+      );
+    }
+
+    return { name: 'boolean', nullable: false };
   }
 
   private resolveExpressionType(expression: ExpressionNode): ResolvedType {

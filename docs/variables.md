@@ -43,6 +43,10 @@ val alias = null;
 - `return null;` is only valid when the expected return type is nullable
 - Numeric variables can be used in arithmetic expressions with `+`, `-`, `*`, `/`, and `%`
 - Comparison operators `==`, `!=`, `<`, `<=`, `>`, and `>=` are available
+- Nullable values can be compared with `==` and `!=`
+- Ordered comparisons do not accept nullable operands
+- `name == null` and `name != null` are valid when `name` is nullable
+- `a == b` and `a != b` are valid when both operands use the same nullable type
 - Null coalescing with `??` is available for nullable values and `null` literals
 - Compound assignments `&&=`, `||=`, and `??=` are available for compatible boolean and nullable variables
 - Bitwise operators `&`, `|`, `^`, `<<`, `>>`, and `~` are available for `int` and `byte`
