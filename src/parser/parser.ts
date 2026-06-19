@@ -6,7 +6,9 @@ import type {
   BinaryExpressionNode,
   BinaryOperator,
   BlockStatementNode,
+  BreakStatementNode,
   ConditionalExpressionNode,
+  ContinueStatementNode,
   DoWhileStatementNode,
   ExpressionNode,
   ExpressionStatementNode,
@@ -355,6 +357,15 @@ export class Parser {
     };
   }
 
+  private parseBreakStatement(keywordToken: Token): BreakStatementNode {
+    const semicolonToken: Token = this.consume(TokenType.Semicolon, 'Expected ";" after "break".');
+
+    return {
+      kind: 'BreakStatement',
+      location: this.mergeLocations(keywordToken.location, semicolonToken.location),
+    };
+  }
+
   private parseComparisonExpression(): ExpressionNode {
     let expression: ExpressionNode = this.parseShiftExpression();
 
@@ -396,6 +407,15 @@ export class Parser {
     };
 
     return conditionalExpression;
+  }
+
+  private parseContinueStatement(keywordToken: Token): ContinueStatementNode {
+    const semicolonToken: Token = this.consume(TokenType.Semicolon, 'Expected ";" after "continue".');
+
+    return {
+      kind: 'ContinueStatement',
+      location: this.mergeLocations(keywordToken.location, semicolonToken.location),
+    };
   }
 
   private parseDoWhileStatement(keywordToken: Token): DoWhileStatementNode {
@@ -680,6 +700,14 @@ export class Parser {
   }
 
   private parseStatement(): StatementNode {
+    if (this.match(TokenType.Break)) {
+      return this.parseBreakStatement(this.previous());
+    }
+
+    if (this.match(TokenType.Continue)) {
+      return this.parseContinueStatement(this.previous());
+    }
+
     if (this.match(TokenType.Do)) {
       return this.parseDoWhileStatement(this.previous());
     }

@@ -1,6 +1,8 @@
 import { type TokenLocation } from '../lexer/token.js';
 import type {
   BlockStatementNode,
+  BreakStatementNode,
+  ContinueStatementNode,
   DoWhileStatementNode,
   ExpressionNode,
   ExpressionStatementNode,
@@ -109,6 +111,10 @@ export class CGenerator {
         continue;
       }
 
+      if (statement.kind === 'BreakStatement' || statement.kind === 'ContinueStatement') {
+        continue;
+      }
+
       if (statement.kind === 'DoWhileStatement') {
         this.collectNullableTypeNamesFromStatements(statement.body.body, typeNames);
         continue;
@@ -197,6 +203,10 @@ export class CGenerator {
     return this.generateScopedBlock(statement.body, indentLevel, `${this.indent(indentLevel)}{`);
   }
 
+  private generateBreakStatement(_statement: BreakStatementNode, indentLevel: number): string[] {
+    return [`${this.indent(indentLevel)}break;`];
+  }
+
   private generateConditionalExpression(expression: ConditionalExpressionNode): string {
     const resultType: TypeNode = this.resolveExpressionType(expression);
     const conditionExpression: string = this.generateExpression(expression.condition);
@@ -204,6 +214,10 @@ export class CGenerator {
     const thenExpression: string = this.generateTypedExpression(resultType, expression.thenExpression);
 
     return `(${conditionExpression} ? ${thenExpression} : ${elseExpression})`;
+  }
+
+  private generateContinueStatement(_statement: ContinueStatementNode, indentLevel: number): string[] {
+    return [`${this.indent(indentLevel)}continue;`];
   }
 
   private generateDoWhileStatement(statement: DoWhileStatementNode, indentLevel: number): string[] {
@@ -449,6 +463,10 @@ export class CGenerator {
     switch (statement.kind) {
       case 'BlockStatement':
         return this.generateBlockStatement(statement, indentLevel);
+      case 'BreakStatement':
+        return this.generateBreakStatement(statement, indentLevel);
+      case 'ContinueStatement':
+        return this.generateContinueStatement(statement, indentLevel);
       case 'DoWhileStatement':
         return this.generateDoWhileStatement(statement, indentLevel);
       case 'ExpressionStatement':
@@ -760,6 +778,10 @@ export class CGenerator {
         return bodyUsesStringEquality;
       }
 
+      if (statement.kind === 'BreakStatement' || statement.kind === 'ContinueStatement') {
+        return false;
+      }
+
       if (statement.kind === 'WhileStatement') {
         if (this.expressionUsesStringEquality(statement.condition)) {
           return true;
@@ -812,6 +834,10 @@ export class CGenerator {
 
       if (statement.kind === 'WhileStatement') {
         return this.usesStringTypeInStatements(statement.body.body);
+      }
+
+      if (statement.kind === 'BreakStatement' || statement.kind === 'ContinueStatement') {
+        return false;
       }
 
       return (

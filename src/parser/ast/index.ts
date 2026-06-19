@@ -1,5 +1,7 @@
 export type { BaseNode } from './base-node.js';
 export type { BlockStatementNode } from './block-statement-node.js';
+export type { BreakStatementNode } from './break-statement-node.js';
+export type { ContinueStatementNode } from './continue-statement-node.js';
 export type { DoWhileStatementNode } from './do-while-statement-node.js';
 export type {
   AssignmentExpressionNode,

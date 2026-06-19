@@ -4,7 +4,9 @@ import type {
   AssignmentExpressionNode,
   BinaryExpressionNode,
   BlockStatementNode,
+  BreakStatementNode,
   ConditionalExpressionNode,
+  ContinueStatementNode,
   DoWhileStatementNode,
   ExpressionNode,
   ExpressionStatementNode,
@@ -46,13 +48,17 @@ export class CheckerError extends Error {
 }
 
 export class Checker {
+  private loopDepth: number;
+
   private readonly scopes: Map<string, SymbolEntry>[];
 
   public constructor() {
+    this.loopDepth = 0;
     this.scopes = [];
   }
 
   public checkProgram(program: ProgramNode): void {
+    this.loopDepth = 0;
     this.scopes.length = 0;
     this.pushScope();
 
@@ -270,6 +276,12 @@ export class Checker {
     this.popScope();
   }
 
+  private checkBreakStatement(statement: BreakStatementNode): void {
+    if (this.loopDepth === 0) {
+      throw new CheckerError('"break" can only be used inside a loop.', statement.location);
+    }
+  }
+
   private checkConditionalExpression(expression: ConditionalExpressionNode): ResolvedType {
     const conditionType: ResolvedType = this.resolveExpressionType(expression.condition);
 
@@ -323,6 +335,12 @@ export class Checker {
     return thenType;
   }
 
+  private checkContinueStatement(statement: ContinueStatementNode): void {
+    if (this.loopDepth === 0) {
+      throw new CheckerError('"continue" can only be used inside a loop.', statement.location);
+    }
+  }
+
   private checkDoWhileStatement(statement: DoWhileStatementNode): void {
     const conditionType: ResolvedType = this.resolveExpressionType(statement.condition);
 
@@ -333,7 +351,9 @@ export class Checker {
       );
     }
 
+    this.loopDepth += 1;
     this.checkBlockStatement(statement.body);
+    this.loopDepth -= 1;
   }
 
   private checkExpressionStatement(statement: ExpressionStatementNode): void {
@@ -365,6 +385,12 @@ export class Checker {
     switch (statement.kind) {
       case 'BlockStatement':
         this.checkBlockStatement(statement);
+        return;
+      case 'BreakStatement':
+        this.checkBreakStatement(statement);
+        return;
+      case 'ContinueStatement':
+        this.checkContinueStatement(statement);
         return;
       case 'DoWhileStatement':
         this.checkDoWhileStatement(statement);
@@ -415,7 +441,9 @@ export class Checker {
       );
     }
 
+    this.loopDepth += 1;
     this.checkBlockStatement(statement.body);
+    this.loopDepth -= 1;
   }
 
   private isBitwiseAssignmentOperator(operator: AssignmentExpressionNode['operator']): boolean {
