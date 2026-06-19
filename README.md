@@ -7,6 +7,7 @@ This README should be kept up to date as the project evolves.
 
 - `docs/language.md` for the general language overview
 - `docs/variables.md` for variable and nullability rules
+- `docs/classes.md` for class and object rules
 - `docs/expressions.md` for expression rules
 - `docs/control-flow.md` for conditions, loops, and block rules
 - `docs/functions.md` for function and return rules
@@ -19,6 +20,7 @@ This README should be kept up to date as the project evolves.
 - A basic C generator is available in `src/codegen`
 - A basic native compilation runner is available in `src/compiler`
 - The compiler currently supports function declarations, function calls, explicit `return` statements, block statements with lexical scoping, `if`/`elif`/`else`, `while`, `do while`, `for`, `break`, `continue`, identifier references, grouping with parentheses, unary expressions, arithmetic, bitwise operations, comparisons, logical expressions, conditional expressions, null coalescing expressions, and compound assignment statements
+- The compiler currently supports classes with fields, constructors, instance methods, static methods, `this`, field access, method calls, and constructor calls
 - Nullable equality with `==` and `!=` is supported, including comparisons against `null`
 - Conditions and logical negation use strict non-nullable `boolean` values only, with no truthy or falsy coercion
 - Top-level executable statements are not allowed

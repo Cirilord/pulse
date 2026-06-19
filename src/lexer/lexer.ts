@@ -98,6 +98,9 @@ export class Lexer {
         case ',':
           tokens.push(this.createToken(TokenType.Comma, startIndex, startLine, startColumn));
           break;
+        case '.':
+          tokens.push(this.createToken(TokenType.Dot, startIndex, startLine, startColumn));
+          break;
         case '^':
           if (this.peek() === '=') {
             this.advance();

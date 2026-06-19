@@ -1,4 +1,5 @@
 import type { BaseNode } from './base-node.js';
+import type { IdentifierNode } from './identifier-node.js';
 
 export type AssignmentOperator =
   | '='
@@ -19,7 +20,7 @@ export type AssignmentOperator =
 export type AssignmentExpressionNode = BaseNode & {
   kind: 'AssignmentExpression';
   operator: AssignmentOperator;
-  target: IdentifierExpressionNode;
+  target: IdentifierExpressionNode | MemberExpressionNode;
   value: ExpressionNode;
 };
 
@@ -92,6 +93,12 @@ export type IdentifierExpressionNode = BaseNode & {
   name: string;
 };
 
+export type MemberExpressionNode = BaseNode & {
+  kind: 'MemberExpression';
+  object: ExpressionNode;
+  property: IdentifierNode;
+};
+
 export type IntegerLiteralNode = BaseNode & {
   kind: 'IntegerLiteral';
   value: number;
@@ -106,6 +113,10 @@ export type StringLiteralNode = BaseNode & {
   value: string;
 };
 
+export type ThisExpressionNode = BaseNode & {
+  kind: 'ThisExpression';
+};
+
 export type ExpressionNode =
   | AssignmentExpressionNode
   | BinaryExpressionNode
@@ -116,6 +127,8 @@ export type ExpressionNode =
   | GroupingExpressionNode
   | IdentifierExpressionNode
   | IntegerLiteralNode
+  | MemberExpressionNode
   | NullLiteralNode
   | StringLiteralNode
+  | ThisExpressionNode
   | UnaryExpressionNode;

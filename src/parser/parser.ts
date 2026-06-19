@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/member-ordering */
 import { TokenType } from '../lexer/token-type.js';
 import type { Token, TokenLocation } from '../lexer/token.js';
 import type {
@@ -8,6 +9,9 @@ import type {
   BlockStatementNode,
   BreakStatementNode,
   CallExpressionNode,
+  ClassDeclarationNode,
+  ClassFieldDeclarationNode,
+  ClassMethodDeclarationNode,
   ConditionalExpressionNode,
   ContinueStatementNode,
   DoWhileStatementNode,
@@ -20,6 +24,7 @@ import type {
   IdentifierNode,
   IdentifierExpressionNode,
   IfStatementNode,
+  MemberExpressionNode,
   NamedTypeNode,
   NullableTypeNode,
   ProgramNode,
@@ -27,6 +32,8 @@ import type {
   StatementNode,
   TopLevelNode,
   TypeNode,
+  AccessModifier,
+  ThisExpressionNode,
   UnaryExpressionNode,
   UnaryOperator,
   VariableDeclarationNode,
@@ -118,6 +125,18 @@ export class Parser {
     };
   }
 
+  private parseAccessModifier(): AccessModifier {
+    if (this.match(TokenType.Public)) {
+      return 'public';
+    }
+
+    if (this.match(TokenType.Private)) {
+      return 'private';
+    }
+
+    throw new ParserError('Expected "public" or "private".', this.peek().location);
+  }
+
   private createUnexpectedTokenError(): never {
     throw new Error('Parser requires at least one token.');
   }
@@ -190,8 +209,11 @@ export class Parser {
 
     const operatorToken: Token = this.previous();
 
-    if (leftExpression.kind !== 'IdentifierExpression') {
-      throw new ParserError('Expected an identifier on the left side of an assignment.', leftExpression.location);
+    if (leftExpression.kind !== 'IdentifierExpression' && leftExpression.kind !== 'MemberExpression') {
+      throw new ParserError(
+        'Expected an assignable target on the left side of an assignment.',
+        leftExpression.location
+      );
     }
 
     const valueExpression: ExpressionNode = this.parseAssignmentExpression();
@@ -392,6 +414,101 @@ export class Parser {
     };
   }
 
+  private parseClassDeclaration(keywordToken: Token): ClassDeclarationNode {
+    const nameToken: Token = this.consume(TokenType.Identifier, 'Expected a class name.');
+    const name: IdentifierNode = this.createIdentifierNode(nameToken);
+
+    this.consume(TokenType.LeftBrace, 'Expected "{" after the class name.');
+
+    const members: Array<ClassFieldDeclarationNode | ClassMethodDeclarationNode> = [];
+
+    while (!this.check(TokenType.RightBrace) && !this.isAtEnd()) {
+      members.push(this.parseClassMemberDeclaration());
+    }
+
+    const rightBraceToken: Token = this.consume(TokenType.RightBrace, 'Expected "}" after the class body.');
+
+    return {
+      kind: 'ClassDeclaration',
+      location: this.mergeLocations(keywordToken.location, rightBraceToken.location),
+      members,
+      name,
+    };
+  }
+
+  private parseClassFieldDeclaration(access: AccessModifier, mutabilityToken: Token): ClassFieldDeclarationNode {
+    const nameToken: Token = this.consume(TokenType.Identifier, 'Expected a field name.');
+    const name: IdentifierNode = this.createIdentifierNode(nameToken);
+
+    this.consume(TokenType.Colon, 'Expected ":" after the field name.');
+
+    const type: TypeNode = this.parseType();
+    const semicolonToken: Token = this.consume(TokenType.Semicolon, 'Expected ";" after the field declaration.');
+
+    return {
+      access,
+      kind: 'ClassFieldDeclaration',
+      location: this.mergeLocations(mutabilityToken.location, semicolonToken.location),
+      mutability: mutabilityToken.type === TokenType.Var ? 'var' : 'val',
+      name,
+      type,
+    };
+  }
+
+  private parseClassMemberDeclaration(): ClassFieldDeclarationNode | ClassMethodDeclarationNode {
+    const access: AccessModifier = this.parseAccessModifier();
+    const isStatic: boolean = this.match(TokenType.Static);
+
+    if (this.match(TokenType.Var, TokenType.Val)) {
+      if (isStatic) {
+        throw new ParserError('Static fields are not supported yet.', this.previous().location);
+      }
+
+      return this.parseClassFieldDeclaration(access, this.previous());
+    }
+
+    this.consume(TokenType.Fn, 'Expected "fn" before the class method declaration.');
+
+    return this.parseClassMethodDeclaration(access, isStatic);
+  }
+
+  private parseClassMethodDeclaration(access: AccessModifier, isStatic: boolean): ClassMethodDeclarationNode {
+    const nameToken: Token = this.match(TokenType.Constructor)
+      ? this.previous()
+      : this.consume(TokenType.Identifier, 'Expected a method name.');
+    const name: IdentifierNode = this.createIdentifierNode(nameToken);
+    const isConstructor: boolean = nameToken.type === TokenType.Constructor;
+
+    this.consume(TokenType.LeftParen, 'Expected "(" after the method name.');
+
+    const parameters: FunctionParameterNode[] = this.parseFunctionParameters();
+
+    this.consume(TokenType.RightParen, 'Expected ")" after the parameters.');
+
+    let returnType: TypeNode | null = null;
+
+    if (!isConstructor) {
+      this.consume(TokenType.Colon, 'Expected ":" after the parameters.');
+      returnType = this.parseType();
+    }
+
+    this.consume(TokenType.LeftBrace, 'Expected "{" after the method signature.');
+
+    const body: BlockStatementNode = this.parseBlockStatement();
+
+    return {
+      access,
+      body,
+      isConstructor,
+      isStatic,
+      kind: 'ClassMethodDeclaration',
+      location: this.mergeLocations(name.location, body.location),
+      name,
+      parameters,
+      returnType,
+    };
+  }
+
   private parseComparisonExpression(): ExpressionNode {
     let expression: ExpressionNode = this.parseShiftExpression();
 
@@ -567,16 +684,16 @@ export class Parser {
     };
   }
 
-  private parseFunctionDeclaration(keywordToken: Token): FunctionDeclarationNode {
-    const nameToken: Token = this.consume(TokenType.Identifier, 'Expected a function name.');
-    const name: IdentifierNode = this.createIdentifierNode(nameToken);
-
-    this.consume(TokenType.LeftParen, 'Expected "(" after the function name.');
-
+  private parseFunctionParameters(): FunctionParameterNode[] {
     const parameters: FunctionParameterNode[] = [];
 
     if (!this.check(TokenType.RightParen)) {
       do {
+        const mutability: 'val' | 'var' = this.match(TokenType.Val, TokenType.Var)
+          ? this.previous().type === TokenType.Var
+            ? 'var'
+            : 'val'
+          : 'val';
         const parameterNameToken: Token = this.consume(TokenType.Identifier, 'Expected a parameter name.');
         const parameterName: IdentifierNode = this.createIdentifierNode(parameterNameToken);
 
@@ -587,11 +704,23 @@ export class Parser {
         parameters.push({
           kind: 'FunctionParameter',
           location: this.mergeLocations(parameterName.location, parameterType.location),
+          mutability,
           name: parameterName,
           type: parameterType,
         });
       } while (this.match(TokenType.Comma));
     }
+
+    return parameters;
+  }
+
+  private parseFunctionDeclaration(keywordToken: Token): FunctionDeclarationNode {
+    const nameToken: Token = this.consume(TokenType.Identifier, 'Expected a function name.');
+    const name: IdentifierNode = this.createIdentifierNode(nameToken);
+
+    this.consume(TokenType.LeftParen, 'Expected "(" after the function name.');
+
+    const parameters: FunctionParameterNode[] = this.parseFunctionParameters();
 
     this.consume(TokenType.RightParen, 'Expected ")" after the parameters.');
     this.consume(TokenType.Colon, 'Expected ":" after the parameters.');
@@ -720,12 +849,60 @@ export class Parser {
   }
 
   private parsePrimaryExpression(): ExpressionNode {
+    if (this.match(TokenType.This)) {
+      const token: Token = this.previous();
+      let expression: ExpressionNode = {
+        kind: 'ThisExpression',
+        location: token.location,
+      } satisfies ThisExpressionNode;
+
+      while (true) {
+        if (this.match(TokenType.LeftParen)) {
+          expression = this.parseCallExpression(expression);
+          continue;
+        }
+
+        if (this.match(TokenType.Dot)) {
+          const propertyToken: Token = this.consume(TokenType.Identifier, 'Expected a member name after ".".');
+          const property: IdentifierNode = this.createIdentifierNode(propertyToken);
+
+          expression = {
+            kind: 'MemberExpression',
+            location: this.mergeLocations(expression.location, property.location),
+            object: expression,
+            property,
+          } satisfies MemberExpressionNode;
+          continue;
+        }
+
+        return expression;
+      }
+    }
+
     if (this.match(TokenType.Identifier)) {
       const token: Token = this.previous();
       let expression: ExpressionNode = this.createIdentifierExpressionNode(token);
 
-      while (this.match(TokenType.LeftParen)) {
-        expression = this.parseCallExpression(expression);
+      while (true) {
+        if (this.match(TokenType.LeftParen)) {
+          expression = this.parseCallExpression(expression);
+          continue;
+        }
+
+        if (this.match(TokenType.Dot)) {
+          const propertyToken: Token = this.consume(TokenType.Identifier, 'Expected a member name after ".".');
+          const property: IdentifierNode = this.createIdentifierNode(propertyToken);
+
+          expression = {
+            kind: 'MemberExpression',
+            location: this.mergeLocations(expression.location, property.location),
+            object: expression,
+            property,
+          } satisfies MemberExpressionNode;
+          continue;
+        }
+
+        break;
       }
 
       return expression;
@@ -875,6 +1052,10 @@ export class Parser {
   }
 
   private parseTopLevel(): TopLevelNode {
+    if (this.match(TokenType.Class)) {
+      return this.parseClassDeclaration(this.previous());
+    }
+
     if (this.match(TokenType.Fn)) {
       return this.parseFunctionDeclaration(this.previous());
     }

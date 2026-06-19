@@ -1,30 +1,48 @@
+/* eslint-disable @typescript-eslint/member-ordering */
 import { type TokenLocation } from '../lexer/token.js';
 import type {
+  AssignmentExpressionNode,
+  BinaryExpressionNode,
   BlockStatementNode,
   BreakStatementNode,
   CallExpressionNode,
+  ClassDeclarationNode,
+  ClassFieldDeclarationNode,
+  ClassMethodDeclarationNode,
+  ConditionalExpressionNode,
   ContinueStatementNode,
   DoWhileStatementNode,
   ExpressionNode,
   ExpressionStatementNode,
-  BinaryExpressionNode,
-  ConditionalExpressionNode,
-  ForInitializerNode,
-  ForStatementNode,
   FunctionDeclarationNode,
   FunctionParameterNode,
+  ForInitializerNode,
+  ForStatementNode,
   IfStatementNode,
+  MemberExpressionNode,
   ProgramNode,
   ReturnStatementNode,
   StatementNode,
-  TypeNode,
   TopLevelNode,
+  TypeNode,
   VariableDeclarationNode,
   WhileStatementNode,
 } from '../parser/ast/index.js';
 
 type FunctionCodegenEntry = {
   declaration: FunctionDeclarationNode;
+};
+
+type ClassMethodCodegenEntry = {
+  declaration: ClassMethodDeclarationNode;
+  mutatesThis: boolean;
+};
+
+type ClassCodegenEntry = {
+  constructorMethod: ClassMethodCodegenEntry | null;
+  declaration: ClassDeclarationNode;
+  fields: Map<string, ClassFieldDeclarationNode>;
+  methods: Map<string, ClassMethodCodegenEntry>;
 };
 
 export class CGeneratorError extends Error {
@@ -38,16 +56,27 @@ export class CGeneratorError extends Error {
 }
 
 export class CGenerator {
+  private readonly classes: Map<string, ClassCodegenEntry>;
+
+  private currentClass: ClassCodegenEntry | null;
+
+  private currentMethod: ClassMethodCodegenEntry | null;
+
   private readonly functions: Map<string, FunctionCodegenEntry>;
 
   private readonly scopes: Map<string, TypeNode>[];
 
   public constructor() {
+    this.classes = new Map<string, ClassCodegenEntry>();
+    this.currentClass = null;
+    this.currentMethod = null;
     this.functions = new Map<string, FunctionCodegenEntry>();
     this.scopes = [];
   }
 
   public generateProgram(program: ProgramNode): string {
+    this.classes.clear();
+    this.collectClasses(program);
     this.functions.clear();
     this.collectFunctions(program);
     this.scopes.length = 0;
@@ -55,9 +84,6 @@ export class CGenerator {
     const usesStringType: boolean = this.usesStringType(program);
     const usesStringEquality: boolean = this.usesStringEquality(program);
     const lines: string[] = ['#include <stdbool.h>', '#include <stddef.h>'];
-
-    this.scopes.length = 0;
-    this.pushScope();
 
     if (usesStringEquality) {
       lines.push('#include <string.h>');
@@ -90,30 +116,50 @@ export class CGenerator {
       lines.push('');
     }
 
-    for (const nullableTypeName of this.collectNullableTypeNames(program)) {
-      lines.push('typedef struct {');
-      lines.push('  bool is_null;');
-      lines.push(`  ${this.getNonNullableCType(nullableTypeName)} value;`);
-      lines.push(`} ${this.getNullableCType(nullableTypeName)};`);
-      lines.push('');
-    }
-
-    for (const functionDeclaration of this.getFunctionDeclarations(program)) {
-      lines.push(this.generateFunctionPrototype(functionDeclaration));
-    }
-
-    if (this.getFunctionDeclarations(program).length > 0) {
-      lines.push('');
-    }
-
-    for (const functionDeclaration of this.getFunctionDeclarations(program)) {
-      lines.push(...this.generateFunctionDeclaration(functionDeclaration));
-      lines.push('');
-    }
-
-    this.popScope();
+    this.emitClassDefinitions(lines);
+    this.emitNullableTypeDefinitions(program, lines);
+    this.emitPrototypes(program, lines);
+    this.emitImplementations(program, lines);
 
     return `${lines.join('\n')}\n`;
+  }
+
+  private collectClasses(program: ProgramNode): void {
+    for (const topLevel of program.body) {
+      if (topLevel.kind !== 'ClassDeclaration') {
+        continue;
+      }
+
+      const fields: Map<string, ClassFieldDeclarationNode> = new Map<string, ClassFieldDeclarationNode>();
+      const methods: Map<string, ClassMethodCodegenEntry> = new Map<string, ClassMethodCodegenEntry>();
+      let constructorMethod: ClassMethodCodegenEntry | null = null;
+
+      for (const member of topLevel.members) {
+        if (member.kind === 'ClassFieldDeclaration') {
+          fields.set(member.name.name, member);
+          continue;
+        }
+
+        const methodEntry: ClassMethodCodegenEntry = {
+          declaration: member,
+          mutatesThis: this.methodMutatesThis(member),
+        };
+
+        if (member.isConstructor) {
+          constructorMethod = methodEntry;
+          continue;
+        }
+
+        methods.set(member.name.name, methodEntry);
+      }
+
+      this.classes.set(topLevel.name.name, {
+        constructorMethod,
+        declaration: topLevel,
+        fields,
+        methods,
+      });
+    }
   }
 
   private collectFunctions(program: ProgramNode): void {
@@ -127,86 +173,154 @@ export class CGenerator {
   private collectNullableTypeNames(program: ProgramNode): string[] {
     const typeNames: Set<string> = new Set<string>();
 
-    this.collectNullableTypeNamesFromTopLevels(program.body, typeNames);
+    const collectType = (type: TypeNode): void => {
+      if (type.kind === 'NullableType') {
+        typeNames.add(type.type.name);
+      }
+    };
+
+    const collectFromStatements = (statements: StatementNode[]): void => {
+      for (const statement of statements) {
+        switch (statement.kind) {
+          case 'BlockStatement':
+            collectFromStatements(statement.body);
+            break;
+          case 'DoWhileStatement':
+            collectFromStatements(statement.body.body);
+            break;
+          case 'ForStatement':
+            if (statement.initializer.kind === 'VariableDeclaration') {
+              collectType(statement.initializer.type);
+            }
+
+            collectFromStatements(statement.body.body);
+            break;
+          case 'IfStatement':
+            collectFromStatements(statement.thenBranch.body);
+
+            if (statement.elseBranch?.kind === 'BlockStatement') {
+              collectFromStatements(statement.elseBranch.body);
+            }
+
+            if (statement.elseBranch?.kind === 'IfStatement') {
+              collectFromStatements([statement.elseBranch]);
+            }
+
+            break;
+          case 'VariableDeclaration':
+            collectType(statement.type);
+            break;
+          case 'WhileStatement':
+            collectFromStatements(statement.body.body);
+            break;
+          case 'BreakStatement':
+          case 'ContinueStatement':
+          case 'ExpressionStatement':
+          case 'ReturnStatement':
+            break;
+        }
+      }
+    };
+
+    for (const topLevel of program.body) {
+      if (topLevel.kind === 'ClassDeclaration') {
+        for (const member of topLevel.members) {
+          if (member.kind === 'ClassFieldDeclaration') {
+            collectType(member.type);
+            continue;
+          }
+
+          for (const parameter of member.parameters) {
+            collectType(parameter.type);
+          }
+
+          if (member.returnType !== null) {
+            collectType(member.returnType);
+          }
+
+          collectFromStatements(member.body.body);
+        }
+
+        continue;
+      }
+
+      if (topLevel.kind === 'FunctionDeclaration') {
+        collectType(topLevel.returnType);
+
+        for (const parameter of topLevel.parameters) {
+          collectType(parameter.type);
+        }
+
+        collectFromStatements(topLevel.body.body);
+      }
+    }
 
     return [...typeNames].sort();
   }
 
-  private collectNullableTypeNamesFromStatements(statements: StatementNode[], typeNames: Set<string>): void {
-    for (const statement of statements) {
-      if (statement.kind === 'BlockStatement') {
-        this.collectNullableTypeNamesFromStatements(statement.body, typeNames);
-        continue;
+  private emitClassDefinitions(lines: string[]): void {
+    for (const classEntry of this.classes.values()) {
+      lines.push('typedef struct {');
+
+      for (const field of classEntry.fields.values()) {
+        lines.push(`  ${this.generateType(field.type, 'var')} ${field.name.name};`);
       }
 
-      if (statement.kind === 'BreakStatement' || statement.kind === 'ContinueStatement') {
-        continue;
-      }
-
-      if (statement.kind === 'ReturnStatement') {
-        continue;
-      }
-
-      if (statement.kind === 'DoWhileStatement') {
-        this.collectNullableTypeNamesFromStatements(statement.body.body, typeNames);
-        continue;
-      }
-
-      if (statement.kind === 'ForStatement') {
-        if (
-          statement.initializer.kind === 'VariableDeclaration' &&
-          statement.initializer.type.kind === 'NullableType'
-        ) {
-          typeNames.add(statement.initializer.type.type.name);
-        }
-
-        this.collectNullableTypeNamesFromStatements(statement.body.body, typeNames);
-        continue;
-      }
-
-      if (statement.kind === 'IfStatement') {
-        this.collectNullableTypeNamesFromStatements(statement.thenBranch.body, typeNames);
-
-        if (statement.elseBranch?.kind === 'BlockStatement') {
-          this.collectNullableTypeNamesFromStatements(statement.elseBranch.body, typeNames);
-        }
-
-        if (statement.elseBranch?.kind === 'IfStatement') {
-          this.collectNullableTypeNamesFromStatements([statement.elseBranch], typeNames);
-        }
-
-        continue;
-      }
-
-      if (statement.kind === 'WhileStatement') {
-        this.collectNullableTypeNamesFromStatements(statement.body.body, typeNames);
-        continue;
-      }
-
-      if (statement.kind === 'VariableDeclaration' && statement.type.kind === 'NullableType') {
-        typeNames.add(statement.type.type.name);
-      }
+      lines.push(`} ${classEntry.declaration.name.name};`);
+      lines.push('');
     }
   }
 
-  private collectNullableTypeNamesFromTopLevels(topLevels: TopLevelNode[], typeNames: Set<string>): void {
-    for (const topLevel of topLevels) {
-      if (topLevel.kind === 'FunctionDeclaration') {
-        if (topLevel.returnType.kind === 'NullableType') {
-          typeNames.add(topLevel.returnType.type.name);
-        }
-
-        for (const parameter of topLevel.parameters) {
-          if (parameter.type.kind === 'NullableType') {
-            typeNames.add(parameter.type.type.name);
-          }
-        }
-
-        this.collectNullableTypeNamesFromStatements(topLevel.body.body, typeNames);
-        continue;
+  private emitImplementations(program: ProgramNode, lines: string[]): void {
+    for (const classEntry of this.classes.values()) {
+      if (classEntry.constructorMethod !== null) {
+        lines.push(...this.generateClassMethodDeclaration(classEntry, classEntry.constructorMethod));
+        lines.push('');
       }
 
-      this.collectNullableTypeNamesFromStatements([topLevel], typeNames);
+      for (const methodEntry of classEntry.methods.values()) {
+        lines.push(...this.generateClassMethodDeclaration(classEntry, methodEntry));
+        lines.push('');
+      }
+    }
+
+    for (const functionDeclaration of this.getFunctionDeclarations(program)) {
+      lines.push(...this.generateFunctionDeclaration(functionDeclaration));
+      lines.push('');
+    }
+  }
+
+  private emitNullableTypeDefinitions(program: ProgramNode, lines: string[]): void {
+    for (const nullableTypeName of this.collectNullableTypeNames(program)) {
+      lines.push('typedef struct {');
+      lines.push('  bool is_null;');
+      lines.push(`  ${this.getNonNullableCType(nullableTypeName)} value;`);
+      lines.push(`} ${this.getNullableCType(nullableTypeName)};`);
+      lines.push('');
+    }
+  }
+
+  private emitPrototypes(program: ProgramNode, lines: string[]): void {
+    const prototypes: string[] = [];
+
+    for (const classEntry of this.classes.values()) {
+      if (classEntry.constructorMethod !== null) {
+        prototypes.push(this.generateClassMethodPrototype(classEntry, classEntry.constructorMethod));
+      }
+
+      for (const methodEntry of classEntry.methods.values()) {
+        prototypes.push(this.generateClassMethodPrototype(classEntry, methodEntry));
+      }
+    }
+
+    for (const functionDeclaration of this.getFunctionDeclarations(program)) {
+      prototypes.push(this.generateFunctionPrototype(functionDeclaration));
+    }
+
+    lines.push(...prototypes);
+
+    if (prototypes.length > 0) {
+      lines.push('');
     }
   }
 
@@ -222,41 +336,50 @@ export class CGenerator {
         return (
           this.expressionUsesStringEquality(expression.left) || this.expressionUsesStringEquality(expression.right)
         );
+      case 'CallExpression':
+        return expression.arguments.some((argument: ExpressionNode): boolean =>
+          this.expressionUsesStringEquality(argument)
+        );
       case 'ConditionalExpression':
         return (
           this.expressionUsesStringEquality(expression.condition) ||
           this.expressionUsesStringEquality(expression.thenExpression) ||
           this.expressionUsesStringEquality(expression.elseExpression)
         );
-      case 'CallExpression':
-        return expression.arguments.some((argument: ExpressionNode): boolean =>
-          this.expressionUsesStringEquality(argument)
-        );
       case 'GroupingExpression':
-        return this.expressionUsesStringEquality(expression.expression);
       case 'UnaryExpression':
         return this.expressionUsesStringEquality(expression.expression);
+      case 'MemberExpression':
+        return this.expressionUsesStringEquality(expression.object);
       case 'BooleanLiteral':
       case 'DoubleLiteral':
       case 'IdentifierExpression':
       case 'IntegerLiteral':
       case 'NullLiteral':
       case 'StringLiteral':
+      case 'ThisExpression':
         return false;
     }
+  }
+
+  private generateAddressableObjectExpression(expression: ExpressionNode): string {
+    if (expression.kind === 'ThisExpression') {
+      return 'self';
+    }
+
+    const objectExpression: string = this.generateExpression(expression);
+
+    if (expression.kind === 'IdentifierExpression') {
+      return `&${objectExpression}`;
+    }
+
+    return `&(${objectExpression})`;
   }
 
   private generateAssignedValue(type: TypeNode, expression: ExpressionNode): string {
     if (type.kind === 'NullableType') {
       if (expression.kind === 'NullLiteral') {
         return `(${this.getNullableCType(type.type.name)}){ .is_null = true, .value = ${this.getDefaultValue(type.type.name)} }`;
-      }
-
-      if (
-        expression.kind === 'IdentifierExpression' &&
-        this.resolveVariableType(expression.name).kind === 'NullableType'
-      ) {
-        return this.generateExpression(expression);
       }
 
       return `(${this.getNullableCType(type.type.name)}){ .is_null = false, .value = ${this.generateNonNullableValue(
@@ -268,6 +391,14 @@ export class CGenerator {
     return this.generateNonNullableValue(type.name, expression);
   }
 
+  private generateAssignmentTarget(target: AssignmentExpressionNode['target']): string {
+    if (target.kind === 'IdentifierExpression') {
+      return target.name;
+    }
+
+    return this.generateFieldAccess(target);
+  }
+
   private generateBlockStatement(statement: BlockStatementNode, indentLevel: number): string[] {
     return this.generateScopedBlock(statement.body, indentLevel, `${this.indent(indentLevel)}{`);
   }
@@ -277,15 +408,169 @@ export class CGenerator {
   }
 
   private generateCallExpression(expression: CallExpressionNode): string {
-    if (expression.callee.kind !== 'IdentifierExpression') {
-      throw new CGeneratorError('Only named functions can be called.', expression.callee.location);
+    if (expression.callee.kind === 'IdentifierExpression') {
+      if (this.classes.has(expression.callee.name)) {
+        const classEntry: ClassCodegenEntry = this.classes.get(expression.callee.name)!;
+        const constructorMethod: ClassMethodCodegenEntry | null = classEntry.constructorMethod;
+
+        if (constructorMethod === null) {
+          throw new CGeneratorError(
+            `Class "${expression.callee.name}" does not declare a constructor.`,
+            expression.callee.location
+          );
+        }
+
+        const argumentsList: string = this.generateCallArguments(
+          expression.arguments,
+          constructorMethod.declaration.parameters
+        );
+
+        return `${expression.callee.name}__constructor(${argumentsList})`;
+      }
+
+      const functionEntry: FunctionCodegenEntry | undefined = this.functions.get(expression.callee.name);
+
+      if (functionEntry === undefined) {
+        throw new CGeneratorError(`Unknown function "${expression.callee.name}".`, expression.callee.location);
+      }
+
+      const argumentsList: string = this.generateCallArguments(
+        expression.arguments,
+        functionEntry.declaration.parameters
+      );
+
+      return `${expression.callee.name}(${argumentsList})`;
     }
 
-    const argumentsList: string = expression.arguments
-      .map((argument: ExpressionNode): string => this.generateExpression(argument))
-      .join(', ');
+    if (expression.callee.kind !== 'MemberExpression') {
+      throw new CGeneratorError('Only named calls are supported.', expression.callee.location);
+    }
 
-    return `${expression.callee.name}(${argumentsList})`;
+    const classReferenceName: string | null = this.resolveClassReferenceName(expression.callee.object);
+
+    if (classReferenceName !== null) {
+      const classEntry: ClassCodegenEntry = this.classes.get(classReferenceName)!;
+      const methodEntry: ClassMethodCodegenEntry | undefined = classEntry.methods.get(expression.callee.property.name);
+
+      if (methodEntry === undefined) {
+        throw new CGeneratorError(
+          `Unknown static method "${expression.callee.property.name}".`,
+          expression.callee.property.location
+        );
+      }
+
+      const argumentsList: string = this.generateCallArguments(
+        expression.arguments,
+        methodEntry.declaration.parameters
+      );
+
+      return `${classReferenceName}__static_method__${expression.callee.property.name}(${argumentsList})`;
+    }
+
+    const instanceTypeName: string = this.resolveClassTypeName(this.resolveExpressionType(expression.callee.object));
+    const classEntry: ClassCodegenEntry = this.classes.get(instanceTypeName)!;
+    const methodEntry: ClassMethodCodegenEntry | undefined = classEntry.methods.get(expression.callee.property.name);
+
+    if (methodEntry === undefined) {
+      throw new CGeneratorError(
+        `Unknown instance method "${expression.callee.property.name}".`,
+        expression.callee.property.location
+      );
+    }
+
+    const receiver: string = this.generateAddressableObjectExpression(expression.callee.object);
+    const argumentsList: string = this.generateCallArguments(expression.arguments, methodEntry.declaration.parameters);
+    const joinedArguments: string = argumentsList.length === 0 ? receiver : `${receiver}, ${argumentsList}`;
+
+    return `${instanceTypeName}__method__${expression.callee.property.name}(${joinedArguments})`;
+  }
+
+  private generateCallArguments(argumentsList: ExpressionNode[], parameters: FunctionParameterNode[]): string {
+    return argumentsList
+      .map((argument: ExpressionNode, index: number): string => {
+        const parameter: FunctionParameterNode | undefined = parameters[index];
+
+        if (parameter === undefined) {
+          return this.generateExpression(argument);
+        }
+
+        return this.generateTypedExpression(parameter.type, argument);
+      })
+      .join(', ');
+  }
+
+  private generateClassMethodDeclaration(
+    classEntry: ClassCodegenEntry,
+    methodEntry: ClassMethodCodegenEntry
+  ): string[] {
+    this.pushScope();
+    const previousClass: ClassCodegenEntry | null = this.currentClass;
+    const previousMethod: ClassMethodCodegenEntry | null = this.currentMethod;
+    this.currentClass = classEntry;
+    this.currentMethod = methodEntry;
+
+    for (const parameter of methodEntry.declaration.parameters) {
+      this.peekScope().set(parameter.name.name, parameter.type);
+    }
+
+    const lines: string[] = [this.generateClassMethodPrototype(classEntry, methodEntry).replace(/;$/u, ' {')];
+
+    if (methodEntry.declaration.isConstructor) {
+      lines.push(
+        `${this.indent(1)}${classEntry.declaration.name.name} self = (${classEntry.declaration.name.name}){ 0 };`
+      );
+    }
+
+    for (const statement of methodEntry.declaration.body.body) {
+      lines.push(...this.generateStatement(statement, 1));
+    }
+
+    if (methodEntry.declaration.isConstructor) {
+      lines.push(`${this.indent(1)}return self;`);
+    }
+
+    this.currentClass = previousClass;
+    this.currentMethod = previousMethod;
+    this.popScope();
+    lines.push('}');
+
+    return lines;
+  }
+
+  private generateClassMethodName(className: string, method: ClassMethodDeclarationNode): string {
+    if (method.isConstructor) {
+      return `${className}__constructor`;
+    }
+
+    if (method.isStatic) {
+      return `${className}__static_method__${method.name.name}`;
+    }
+
+    return `${className}__method__${method.name.name}`;
+  }
+
+  private generateClassMethodPrototype(classEntry: ClassCodegenEntry, methodEntry: ClassMethodCodegenEntry): string {
+    const method: ClassMethodDeclarationNode = methodEntry.declaration;
+
+    if (method.isConstructor) {
+      const parameters: string = method.parameters
+        .map((parameter: FunctionParameterNode): string => this.generateFunctionParameter(parameter))
+        .join(', ');
+
+      return `${classEntry.declaration.name.name} ${this.generateClassMethodName(classEntry.declaration.name.name, method)}(${parameters.length > 0 ? parameters : 'void'});`;
+    }
+
+    const parameters: string[] = [];
+
+    if (!method.isStatic) {
+      parameters.push(`${methodEntry.mutatesThis ? '' : 'const '}${classEntry.declaration.name.name} *self`);
+    }
+
+    for (const parameter of method.parameters) {
+      parameters.push(this.generateFunctionParameter(parameter));
+    }
+
+    return `${this.generateType(method.returnType!, 'var')} ${this.generateClassMethodName(classEntry.declaration.name.name, method)}(${parameters.length > 0 ? parameters.join(', ') : 'void'});`;
   }
 
   private generateConditionalExpression(expression: ConditionalExpressionNode): string {
@@ -358,7 +643,7 @@ export class CGenerator {
       rightType.kind === 'NamedType' &&
       rightType.name === 'string'
     ) {
-      return `(string_t_equal(${this.generateExpression(expression.left)}, ${this.generateExpression(expression.right)})${
+      return `(string_t_equal(${this.generateNonNullableValue('string', expression.left)}, ${this.generateNonNullableValue('string', expression.right)})${
         expression.operator === '!=' ? ' == false' : ''
       })`;
     }
@@ -377,8 +662,8 @@ export class CGenerator {
           return this.generateNullCoalescingAssignmentExpression(expression);
         }
 
-        return `${expression.target.name} ${expression.operator} ${this.generateAssignedValue(
-          this.resolveVariableType(expression.target.name),
+        return `${this.generateAssignmentTarget(expression.target)} ${expression.operator} ${this.generateAssignedValue(
+          this.resolveAssignmentTargetType(expression.target),
           expression.value
         )}`;
       case 'BinaryExpression':
@@ -405,10 +690,14 @@ export class CGenerator {
         return expression.name;
       case 'IntegerLiteral':
         return String(expression.value);
+      case 'MemberExpression':
+        return this.generateFieldAccess(expression);
       case 'NullLiteral':
         throw new CGeneratorError('Null literals must be emitted in a nullable context.', expression.location);
       case 'StringLiteral':
         return JSON.stringify(expression.value);
+      case 'ThisExpression':
+        return '(*self)';
       case 'UnaryExpression':
         return `(${expression.operator}${this.generateExpression(expression.expression)})`;
     }
@@ -416,6 +705,28 @@ export class CGenerator {
 
   private generateExpressionStatement(statement: ExpressionStatementNode): string {
     return `${this.generateExpression(statement.expression)};`;
+  }
+
+  private generateFieldAccess(expression: MemberExpressionNode): string {
+    if (expression.object.kind === 'ThisExpression') {
+      return this.currentMethod?.declaration.isConstructor
+        ? `self.${expression.property.name}`
+        : `self->${expression.property.name}`;
+    }
+
+    const classReferenceName: string | null = this.resolveClassReferenceName(expression.object);
+
+    if (classReferenceName !== null) {
+      throw new CGeneratorError('Static members cannot be accessed as values.', expression.location);
+    }
+
+    const objectExpression: string = this.generateExpression(expression.object);
+
+    if (expression.object.kind === 'IdentifierExpression') {
+      return `${objectExpression}.${expression.property.name}`;
+    }
+
+    return `(${objectExpression}).${expression.property.name}`;
   }
 
   private generateForInitializer(initializer: ForInitializerNode): string {
@@ -456,7 +767,7 @@ export class CGenerator {
       this.peekScope().set(parameter.name.name, parameter.type);
     }
 
-    const lines: string[] = [this.generateFunctionPrototype(statement).replace(/;$/, ' {')];
+    const lines: string[] = [this.generateFunctionPrototype(statement).replace(/;$/u, ' {')];
 
     for (const bodyStatement of statement.body.body) {
       lines.push(...this.generateStatement(bodyStatement, 1));
@@ -469,7 +780,7 @@ export class CGenerator {
   }
 
   private generateFunctionParameter(parameter: FunctionParameterNode): string {
-    return `${this.generateType(parameter.type, 'var')} ${parameter.name.name}`;
+    return `${this.generateType(parameter.type, parameter.mutability)} ${parameter.name.name}`;
   }
 
   private generateFunctionPrototype(statement: FunctionDeclarationNode): string {
@@ -501,11 +812,12 @@ export class CGenerator {
     return lines;
   }
 
-  private generateLogicalAssignmentExpression(expression: ExpressionNode & { kind: 'AssignmentExpression' }): string {
+  private generateLogicalAssignmentExpression(expression: AssignmentExpressionNode): string {
     const operator: string = expression.operator === '&&=' ? '&&' : '||';
+    const targetExpression: string = this.generateAssignmentTarget(expression.target);
     const valueExpression: string = this.generateExpression(expression.value);
 
-    return `${expression.target.name} = (${expression.target.name} ${operator} ${valueExpression})`;
+    return `${targetExpression} = (${targetExpression} ${operator} ${valueExpression})`;
   }
 
   private generateNonNullableValue(typeName: string, expression: ExpressionNode): string {
@@ -524,18 +836,17 @@ export class CGenerator {
     return this.generateExpression(expression);
   }
 
-  private generateNullCoalescingAssignmentExpression(
-    expression: ExpressionNode & { kind: 'AssignmentExpression' }
-  ): string {
-    const targetType: TypeNode = this.resolveVariableType(expression.target.name);
+  private generateNullCoalescingAssignmentExpression(expression: AssignmentExpressionNode): string {
+    const targetType: TypeNode = this.resolveAssignmentTargetType(expression.target);
 
     if (targetType.kind !== 'NullableType') {
       throw new CGeneratorError('Null coalescing assignment requires a nullable target.', expression.location);
     }
 
+    const targetExpression: string = this.generateAssignmentTarget(expression.target);
     const assignedValue: string = this.generateAssignedValue(targetType, expression.value);
 
-    return `${expression.target.name} = (${expression.target.name}.is_null ? ${assignedValue} : ${expression.target.name})`;
+    return `${targetExpression} = (${targetExpression}.is_null ? ${assignedValue} : ${targetExpression})`;
   }
 
   private generateNullCoalescingExpression(expression: BinaryExpressionNode): string {
@@ -642,10 +953,12 @@ export class CGenerator {
     if (type.kind === 'NullableType') {
       const nullableCType: string = this.getNullableCType(type.type.name);
 
-      return mutability === 'val' ? `const ${nullableCType}` : nullableCType;
+      return this.shouldEmitConst(type, mutability) ? `const ${nullableCType}` : nullableCType;
     }
 
-    return this.getNonNullableType(type.name, mutability);
+    const cType: string = this.getNonNullableCType(type.name);
+
+    return this.shouldEmitConst(type, mutability) ? `const ${cType}` : cType;
   }
 
   private generateTypedExpression(type: TypeNode, expression: ExpressionNode): string {
@@ -688,15 +1001,19 @@ export class CGenerator {
       case 'string':
         return '(string_t){ .length = 0, .data = NULL }';
       default:
+        if (this.classes.has(typeName)) {
+          return `(${typeName}){ 0 }`;
+        }
+
         throw new Error(`Unsupported default value for "${typeName}".`);
     }
   }
 
   private getFunctionDeclarations(program: ProgramNode): FunctionDeclarationNode[] {
     for (const topLevel of program.body) {
-      if (topLevel.kind !== 'FunctionDeclaration') {
+      if (topLevel.kind !== 'ClassDeclaration' && topLevel.kind !== 'FunctionDeclaration') {
         throw new CGeneratorError(
-          'Top-level statements are not allowed. Declare a Pulse main function instead.',
+          'Top-level statements are not allowed. Declare functions and classes only.',
           topLevel.location
         );
       }
@@ -726,14 +1043,12 @@ export class CGenerator {
       case 'void':
         return 'void';
       default:
+        if (this.classes.has(typeName)) {
+          return typeName;
+        }
+
         throw new Error(`Unsupported C type for "${typeName}".`);
     }
-  }
-
-  private getNonNullableType(typeName: string, mutability: 'val' | 'var'): string {
-    const cType: string = this.getNonNullableCType(typeName);
-
-    return mutability === 'val' ? `const ${cType}` : cType;
   }
 
   private getNullableCType(typeName: string): string {
@@ -742,6 +1057,19 @@ export class CGenerator {
 
   private indent(level: number): string {
     return '  '.repeat(level);
+  }
+
+  private isPrimitiveTypeName(typeName: string): boolean {
+    return (
+      typeName === 'boolean' ||
+      typeName === 'byte' ||
+      typeName === 'char' ||
+      typeName === 'double' ||
+      typeName === 'float' ||
+      typeName === 'int' ||
+      typeName === 'string' ||
+      typeName === 'void'
+    );
   }
 
   private isStringEquality(expression: BinaryExpressionNode): boolean {
@@ -766,6 +1094,75 @@ export class CGenerator {
     );
   }
 
+  private methodMutatesThis(method: ClassMethodDeclarationNode): boolean {
+    const statementMutatesThis = (statement: StatementNode): boolean => {
+      switch (statement.kind) {
+        case 'BlockStatement':
+          return statement.body.some(statementMutatesThis);
+        case 'DoWhileStatement':
+          return statement.body.body.some(statementMutatesThis);
+        case 'ExpressionStatement':
+          return expressionMutatesThis(statement.expression);
+        case 'ForStatement':
+          return (
+            (statement.initializer.kind === 'VariableDeclaration' &&
+              expressionMutatesThis(statement.initializer.initializer)) ||
+            (statement.initializer.kind !== 'VariableDeclaration' && expressionMutatesThis(statement.initializer)) ||
+            expressionMutatesThis(statement.condition) ||
+            expressionMutatesThis(statement.update) ||
+            statement.body.body.some(statementMutatesThis)
+          );
+        case 'IfStatement':
+          return (
+            expressionMutatesThis(statement.condition) ||
+            statement.thenBranch.body.some(statementMutatesThis) ||
+            (statement.elseBranch?.kind === 'BlockStatement' && statement.elseBranch.body.some(statementMutatesThis)) ||
+            (statement.elseBranch?.kind === 'IfStatement' && statementMutatesThis(statement.elseBranch))
+          );
+        case 'ReturnStatement':
+          return statement.expression !== null && expressionMutatesThis(statement.expression);
+        case 'VariableDeclaration':
+          return expressionMutatesThis(statement.initializer);
+        case 'WhileStatement':
+          return expressionMutatesThis(statement.condition) || statement.body.body.some(statementMutatesThis);
+        case 'BreakStatement':
+        case 'ContinueStatement':
+          return false;
+      }
+    };
+
+    const expressionMutatesThis = (expression: ExpressionNode): boolean => {
+      switch (expression.kind) {
+        case 'AssignmentExpression':
+          return expression.target.kind === 'MemberExpression' && expression.target.object.kind === 'ThisExpression';
+        case 'BinaryExpression':
+          return expressionMutatesThis(expression.left) || expressionMutatesThis(expression.right);
+        case 'CallExpression':
+          return expression.arguments.some(expressionMutatesThis);
+        case 'ConditionalExpression':
+          return (
+            expressionMutatesThis(expression.condition) ||
+            expressionMutatesThis(expression.thenExpression) ||
+            expressionMutatesThis(expression.elseExpression)
+          );
+        case 'GroupingExpression':
+        case 'UnaryExpression':
+          return expressionMutatesThis(expression.expression);
+        case 'MemberExpression':
+        case 'BooleanLiteral':
+        case 'DoubleLiteral':
+        case 'IdentifierExpression':
+        case 'IntegerLiteral':
+        case 'NullLiteral':
+        case 'StringLiteral':
+        case 'ThisExpression':
+          return false;
+      }
+    };
+
+    return method.body.body.some(statementMutatesThis);
+  }
+
   private peekScope(): Map<string, TypeNode> {
     const scope: Map<string, TypeNode> | undefined = this.scopes.at(-1);
 
@@ -788,6 +1185,38 @@ export class CGenerator {
     this.scopes.push(new Map<string, TypeNode>());
   }
 
+  private resolveAssignmentTargetType(target: AssignmentExpressionNode['target']): TypeNode {
+    if (target.kind === 'IdentifierExpression') {
+      return this.resolveVariableType(target.name);
+    }
+
+    return this.resolveFieldType(target);
+  }
+
+  private resolveClassReferenceName(expression: ExpressionNode): string | null {
+    if (
+      expression.kind === 'IdentifierExpression' &&
+      this.classes.has(expression.name) &&
+      !this.scopeContains(expression.name)
+    ) {
+      return expression.name;
+    }
+
+    return null;
+  }
+
+  private resolveClassTypeName(type: TypeNode): string {
+    if (type.kind === 'NullableType') {
+      throw new CGeneratorError('Expected a non-nullable class type.', type.location);
+    }
+
+    if (this.isPrimitiveTypeName(type.name)) {
+      throw new CGeneratorError('Expected a class type.', type.location);
+    }
+
+    return type.name;
+  }
+
   private resolveConditionalExpressionType(expression: ConditionalExpressionNode): TypeNode {
     if (expression.thenExpression.kind === 'NullLiteral' && expression.elseExpression.kind === 'NullLiteral') {
       throw new CGeneratorError('Conditional expressions cannot use null in both branches.', expression.location);
@@ -807,7 +1236,7 @@ export class CGenerator {
   private resolveExpressionType(expression: ExpressionNode): TypeNode {
     switch (expression.kind) {
       case 'AssignmentExpression':
-        return this.resolveVariableType(expression.target.name);
+        return this.resolveAssignmentTargetType(expression.target);
       case 'BinaryExpression':
         if (expression.operator === '??') {
           return this.resolveNullCoalescingType(expression);
@@ -830,7 +1259,7 @@ export class CGenerator {
       case 'BooleanLiteral':
         return { kind: 'NamedType', location: expression.location, name: 'boolean' };
       case 'CallExpression':
-        return this.resolveFunctionType(expression);
+        return this.resolveCallExpressionType(expression);
       case 'ConditionalExpression':
         return this.resolveConditionalExpressionType(expression);
       case 'DoubleLiteral':
@@ -838,13 +1267,25 @@ export class CGenerator {
       case 'GroupingExpression':
         return this.resolveExpressionType(expression.expression);
       case 'IdentifierExpression':
-        return this.resolveVariableType(expression.name);
+        return this.resolveIdentifierOrClassType(expression);
       case 'IntegerLiteral':
         return { kind: 'NamedType', location: expression.location, name: 'int' };
+      case 'MemberExpression':
+        return this.resolveFieldType(expression);
       case 'NullLiteral':
         throw new CGeneratorError('Null literals cannot be resolved without context.', expression.location);
       case 'StringLiteral':
         return { kind: 'NamedType', location: expression.location, name: 'string' };
+      case 'ThisExpression':
+        if (this.currentClass === null) {
+          throw new CGeneratorError('"this" is only available inside class methods.', expression.location);
+        }
+
+        return {
+          kind: 'NamedType',
+          location: expression.location,
+          name: this.currentClass.declaration.name.name,
+        };
       case 'UnaryExpression':
         if (expression.operator === '!') {
           return { kind: 'NamedType', location: expression.location, name: 'boolean' };
@@ -854,18 +1295,94 @@ export class CGenerator {
     }
   }
 
-  private resolveFunctionType(expression: CallExpressionNode): TypeNode {
-    if (expression.callee.kind !== 'IdentifierExpression') {
-      throw new CGeneratorError('Only named functions can be called.', expression.callee.location);
+  private resolveFieldType(expression: MemberExpressionNode): TypeNode {
+    const classReferenceName: string | null = this.resolveClassReferenceName(expression.object);
+
+    if (classReferenceName !== null) {
+      throw new CGeneratorError('Static members cannot be accessed as values.', expression.location);
     }
 
-    const functionEntry: FunctionCodegenEntry | undefined = this.functions.get(expression.callee.name);
+    const objectType: TypeNode = this.resolveExpressionType(expression.object);
+    const classTypeName: string = this.resolveClassTypeName(objectType);
+    const classEntry: ClassCodegenEntry | undefined = this.classes.get(classTypeName);
+    const fieldEntry: ClassFieldDeclarationNode | undefined = classEntry?.fields.get(expression.property.name);
 
-    if (functionEntry === undefined) {
-      throw new CGeneratorError(`Unknown function "${expression.callee.name}".`, expression.callee.location);
+    if (fieldEntry === undefined) {
+      throw new CGeneratorError(
+        `Unknown field "${expression.property.name}" on "${classTypeName}".`,
+        expression.property.location
+      );
     }
 
-    return functionEntry.declaration.returnType;
+    return fieldEntry.type;
+  }
+
+  private resolveIdentifierOrClassType(expression: ExpressionNode & { kind: 'IdentifierExpression' }): TypeNode {
+    for (let index = this.scopes.length - 1; index >= 0; index -= 1) {
+      const typeNode: TypeNode | undefined = this.scopes[index]?.get(expression.name);
+
+      if (typeNode !== undefined) {
+        return typeNode;
+      }
+    }
+
+    if (this.classes.has(expression.name)) {
+      return {
+        kind: 'NamedType',
+        location: expression.location,
+        name: expression.name,
+      };
+    }
+
+    throw new Error(`Unknown variable "${expression.name}" in C generator.`);
+  }
+
+  private resolveCallExpressionType(expression: CallExpressionNode): TypeNode {
+    if (expression.callee.kind === 'IdentifierExpression') {
+      const functionEntry: FunctionCodegenEntry | undefined = this.functions.get(expression.callee.name);
+
+      if (functionEntry !== undefined) {
+        return functionEntry.declaration.returnType;
+      }
+
+      if (this.classes.has(expression.callee.name)) {
+        return {
+          kind: 'NamedType',
+          location: expression.location,
+          name: expression.callee.name,
+        };
+      }
+    }
+
+    if (expression.callee.kind === 'MemberExpression') {
+      const classReferenceName: string | null = this.resolveClassReferenceName(expression.callee.object);
+
+      if (classReferenceName !== null) {
+        const classEntry: ClassCodegenEntry = this.classes.get(classReferenceName)!;
+        const methodEntry: ClassMethodCodegenEntry | undefined = classEntry.methods.get(
+          expression.callee.property.name
+        );
+
+        if (methodEntry === undefined || methodEntry.declaration.returnType === null) {
+          throw new CGeneratorError('Unknown static method.', expression.callee.property.location);
+        }
+
+        return methodEntry.declaration.returnType;
+      }
+
+      const objectType: TypeNode = this.resolveExpressionType(expression.callee.object);
+      const classTypeName: string = this.resolveClassTypeName(objectType);
+      const classEntry: ClassCodegenEntry = this.classes.get(classTypeName)!;
+      const methodEntry: ClassMethodCodegenEntry | undefined = classEntry.methods.get(expression.callee.property.name);
+
+      if (methodEntry === undefined || methodEntry.declaration.returnType === null) {
+        throw new CGeneratorError('Unknown instance method.', expression.callee.property.location);
+      }
+
+      return methodEntry.declaration.returnType;
+    }
+
+    throw new CGeneratorError('Only named calls are supported.', expression.callee.location);
   }
 
   private resolveNonNullableTypeNode(expression: ExpressionNode): TypeNode {
@@ -908,77 +1425,109 @@ export class CGenerator {
     throw new Error(`Unknown variable "${name}" in C generator.`);
   }
 
-  private usesStringEquality(program: ProgramNode): boolean {
-    this.scopes.length = 0;
-    this.pushScope();
-    const usesStringEquality: boolean = this.usesStringEqualityInTopLevels(program.body);
-    this.popScope();
+  private scopeContains(name: string): boolean {
+    for (let index = this.scopes.length - 1; index >= 0; index -= 1) {
+      if (this.scopes[index]?.has(name)) {
+        return true;
+      }
+    }
 
-    return usesStringEquality;
+    return false;
   }
 
-  private usesStringEqualityInStatements(statements: StatementNode[]): boolean {
-    return statements.some((statement: StatementNode): boolean => {
-      if (statement.kind === 'BlockStatement') {
-        this.pushScope();
+  private shouldEmitConst(type: TypeNode, mutability: 'val' | 'var'): boolean {
+    if (mutability !== 'val') {
+      return false;
+    }
 
-        const blockUsesStringEquality: boolean = this.usesStringEqualityInStatements(statement.body);
+    const typeName: string = type.kind === 'NullableType' ? type.type.name : type.name;
 
-        this.popScope();
+    return this.isPrimitiveTypeName(typeName);
+  }
 
-        return blockUsesStringEquality;
-      }
+  private typeUsesString(type: TypeNode): boolean {
+    if (type.kind === 'NullableType') {
+      return type.type.name === 'string';
+    }
 
-      if (statement.kind === 'IfStatement') {
-        if (this.expressionUsesStringEquality(statement.condition)) {
-          return true;
-        }
+    return type.name === 'string';
+  }
 
-        this.pushScope();
-        const thenBranchUsesStringEquality: boolean = this.usesStringEqualityInStatements(statement.thenBranch.body);
-        this.popScope();
-
-        if (thenBranchUsesStringEquality) {
-          return true;
-        }
-
-        if (statement.elseBranch === null) {
-          return false;
-        }
-
-        if (statement.elseBranch.kind === 'BlockStatement') {
+  private usesStringEquality(program: ProgramNode): boolean {
+    const usesStringEqualityInStatements = (statements: StatementNode[]): boolean => {
+      return statements.some((statement: StatementNode): boolean => {
+        if (statement.kind === 'BlockStatement') {
           this.pushScope();
-          const elseBranchUsesStringEquality: boolean = this.usesStringEqualityInStatements(statement.elseBranch.body);
+          const blockUsesStringEquality: boolean = usesStringEqualityInStatements(statement.body);
+          this.popScope();
+          return blockUsesStringEquality;
+        }
+
+        if (statement.kind === 'IfStatement') {
+          if (this.expressionUsesStringEquality(statement.condition)) {
+            return true;
+          }
+
+          this.pushScope();
+          const thenBranchUsesStringEquality: boolean = usesStringEqualityInStatements(statement.thenBranch.body);
           this.popScope();
 
-          return elseBranchUsesStringEquality;
+          if (thenBranchUsesStringEquality) {
+            return true;
+          }
+
+          if (statement.elseBranch === null) {
+            return false;
+          }
+
+          if (statement.elseBranch.kind === 'BlockStatement') {
+            this.pushScope();
+            const elseBranchUsesStringEquality: boolean = usesStringEqualityInStatements(statement.elseBranch.body);
+            this.popScope();
+
+            return elseBranchUsesStringEquality;
+          }
+
+          return usesStringEqualityInStatements([statement.elseBranch]);
         }
 
-        return this.usesStringEqualityInStatements([statement.elseBranch]);
-      }
+        if (statement.kind === 'DoWhileStatement') {
+          if (this.expressionUsesStringEquality(statement.condition)) {
+            return true;
+          }
 
-      if (statement.kind === 'DoWhileStatement') {
-        if (this.expressionUsesStringEquality(statement.condition)) {
-          return true;
-        }
-
-        this.pushScope();
-        const bodyUsesStringEquality: boolean = this.usesStringEqualityInStatements(statement.body.body);
-        this.popScope();
-
-        return bodyUsesStringEquality;
-      }
-
-      if (statement.kind === 'ForStatement') {
-        if (statement.initializer.kind === 'VariableDeclaration') {
-          const initializerUsesStringEquality: boolean = this.expressionUsesStringEquality(
-            statement.initializer.initializer
-          );
           this.pushScope();
-          this.peekScope().set(statement.initializer.name.name, statement.initializer.type);
+          const bodyUsesStringEquality: boolean = usesStringEqualityInStatements(statement.body.body);
+          this.popScope();
+
+          return bodyUsesStringEquality;
+        }
+
+        if (statement.kind === 'ForStatement') {
+          this.pushScope();
+
+          if (statement.initializer.kind === 'VariableDeclaration') {
+            const initializerUsesStringEquality: boolean = this.expressionUsesStringEquality(
+              statement.initializer.initializer
+            );
+            this.peekScope().set(statement.initializer.name.name, statement.initializer.type);
+            const conditionUsesStringEquality: boolean = this.expressionUsesStringEquality(statement.condition);
+            const updateUsesStringEquality: boolean = this.expressionUsesStringEquality(statement.update);
+            const bodyUsesStringEquality: boolean = usesStringEqualityInStatements(statement.body.body);
+            this.popScope();
+
+            return (
+              initializerUsesStringEquality ||
+              conditionUsesStringEquality ||
+              updateUsesStringEquality ||
+              bodyUsesStringEquality
+            );
+          }
+
+          const initializerUsesStringEquality: boolean = this.expressionUsesStringEquality(statement.initializer);
           const conditionUsesStringEquality: boolean = this.expressionUsesStringEquality(statement.condition);
           const updateUsesStringEquality: boolean = this.expressionUsesStringEquality(statement.update);
-          const bodyUsesStringEquality: boolean = this.usesStringEqualityInStatements(statement.body.body);
+          const bodyUsesStringEquality: boolean = usesStringEqualityInStatements(statement.body.body);
           this.popScope();
 
           return (
@@ -989,58 +1538,63 @@ export class CGenerator {
           );
         }
 
-        this.pushScope();
-        const initializerUsesStringEquality: boolean = this.expressionUsesStringEquality(statement.initializer);
-        const conditionUsesStringEquality: boolean = this.expressionUsesStringEquality(statement.condition);
-        const updateUsesStringEquality: boolean = this.expressionUsesStringEquality(statement.update);
-        const bodyUsesStringEquality: boolean = this.usesStringEqualityInStatements(statement.body.body);
-        this.popScope();
+        if (statement.kind === 'WhileStatement') {
+          if (this.expressionUsesStringEquality(statement.condition)) {
+            return true;
+          }
 
-        return (
-          initializerUsesStringEquality ||
-          conditionUsesStringEquality ||
-          updateUsesStringEquality ||
-          bodyUsesStringEquality
-        );
-      }
+          this.pushScope();
+          const bodyUsesStringEquality: boolean = usesStringEqualityInStatements(statement.body.body);
+          this.popScope();
 
-      if (statement.kind === 'BreakStatement' || statement.kind === 'ContinueStatement') {
-        return false;
-      }
+          return bodyUsesStringEquality;
+        }
 
-      if (statement.kind === 'ReturnStatement') {
-        return statement.expression !== null && this.expressionUsesStringEquality(statement.expression);
-      }
+        if (statement.kind === 'BreakStatement' || statement.kind === 'ContinueStatement') {
+          return false;
+        }
 
-      if (statement.kind === 'WhileStatement') {
-        if (this.expressionUsesStringEquality(statement.condition)) {
+        if (statement.kind === 'ExpressionStatement') {
+          return this.expressionUsesStringEquality(statement.expression);
+        }
+
+        if (statement.kind === 'ReturnStatement') {
+          return statement.expression !== null && this.expressionUsesStringEquality(statement.expression);
+        }
+
+        const declarationUsesStringEquality: boolean = this.expressionUsesStringEquality(statement.initializer);
+        this.peekScope().set(statement.name.name, statement.type);
+
+        if (declarationUsesStringEquality) {
           return true;
         }
 
-        this.pushScope();
-        const bodyUsesStringEquality: boolean = this.usesStringEqualityInStatements(statement.body.body);
-        this.popScope();
+        return false;
+      });
+    };
 
-        return bodyUsesStringEquality;
+    this.scopes.length = 0;
+
+    return program.body.some((topLevel: TopLevelNode): boolean => {
+      if (topLevel.kind === 'ClassDeclaration') {
+        return topLevel.members.some((member): boolean => {
+          if (member.kind !== 'ClassMethodDeclaration') {
+            return false;
+          }
+
+          this.pushScope();
+
+          for (const parameter of member.parameters) {
+            this.peekScope().set(parameter.name.name, parameter.type);
+          }
+
+          const bodyUsesStringEquality: boolean = usesStringEqualityInStatements(member.body.body);
+          this.popScope();
+
+          return bodyUsesStringEquality;
+        });
       }
 
-      if (statement.kind === 'ExpressionStatement') {
-        return this.expressionUsesStringEquality(statement.expression);
-      }
-
-      const declarationUsesStringEquality: boolean = this.expressionUsesStringEquality(statement.initializer);
-      this.peekScope().set(statement.name.name, statement.type);
-
-      if (declarationUsesStringEquality) {
-        return true;
-      }
-
-      return false;
-    });
-  }
-
-  private usesStringEqualityInTopLevels(topLevels: TopLevelNode[]): boolean {
-    return topLevels.some((topLevel: TopLevelNode): boolean => {
       if (topLevel.kind === 'FunctionDeclaration') {
         this.pushScope();
 
@@ -1048,86 +1602,83 @@ export class CGenerator {
           this.peekScope().set(parameter.name.name, parameter.type);
         }
 
-        const bodyUsesStringEquality: boolean = this.usesStringEqualityInStatements(topLevel.body.body);
+        const bodyUsesStringEquality: boolean = usesStringEqualityInStatements(topLevel.body.body);
         this.popScope();
 
         return bodyUsesStringEquality;
       }
 
-      return this.usesStringEqualityInStatements([topLevel]);
+      return false;
     });
   }
 
   private usesStringType(program: ProgramNode): boolean {
-    return this.usesStringTypeInTopLevels(program.body);
-  }
+    const usesStringTypeInStatements = (statements: StatementNode[]): boolean => {
+      return statements.some((statement: StatementNode): boolean => {
+        if (statement.kind === 'BlockStatement') {
+          return usesStringTypeInStatements(statement.body);
+        }
 
-  private usesStringTypeInStatements(statements: StatementNode[]): boolean {
-    return statements.some((statement: StatementNode): boolean => {
-      if (statement.kind === 'BlockStatement') {
-        return this.usesStringTypeInStatements(statement.body);
-      }
+        if (statement.kind === 'DoWhileStatement') {
+          return usesStringTypeInStatements(statement.body.body);
+        }
 
-      if (statement.kind === 'IfStatement') {
-        return (
-          this.usesStringTypeInStatements(statement.thenBranch.body) ||
-          (statement.elseBranch?.kind === 'BlockStatement' &&
-            this.usesStringTypeInStatements(statement.elseBranch.body)) ||
-          (statement.elseBranch?.kind === 'IfStatement' && this.usesStringTypeInStatements([statement.elseBranch]))
-        );
-      }
+        if (statement.kind === 'ForStatement') {
+          return (
+            (statement.initializer.kind === 'VariableDeclaration' && this.typeUsesString(statement.initializer.type)) ||
+            usesStringTypeInStatements(statement.body.body)
+          );
+        }
 
-      if (statement.kind === 'DoWhileStatement') {
-        return this.usesStringTypeInStatements(statement.body.body);
-      }
+        if (statement.kind === 'IfStatement') {
+          return (
+            usesStringTypeInStatements(statement.thenBranch.body) ||
+            (statement.elseBranch?.kind === 'BlockStatement' &&
+              usesStringTypeInStatements(statement.elseBranch.body)) ||
+            (statement.elseBranch?.kind === 'IfStatement' && usesStringTypeInStatements([statement.elseBranch]))
+          );
+        }
 
-      if (statement.kind === 'ForStatement') {
-        return (
-          (statement.initializer.kind === 'VariableDeclaration' &&
-            ((statement.initializer.type.kind === 'NamedType' && statement.initializer.type.name === 'string') ||
-              (statement.initializer.type.kind === 'NullableType' &&
-                statement.initializer.type.type.name === 'string'))) ||
-          this.usesStringTypeInStatements(statement.body.body)
-        );
-      }
+        if (statement.kind === 'VariableDeclaration') {
+          return this.typeUsesString(statement.type);
+        }
 
-      if (statement.kind === 'WhileStatement') {
-        return this.usesStringTypeInStatements(statement.body.body);
-      }
+        if (statement.kind === 'WhileStatement') {
+          return usesStringTypeInStatements(statement.body.body);
+        }
 
-      if (statement.kind === 'BreakStatement' || statement.kind === 'ContinueStatement') {
         return false;
+      });
+    };
+
+    return program.body.some((topLevel: TopLevelNode): boolean => {
+      if (topLevel.kind === 'ClassDeclaration') {
+        return topLevel.members.some((member): boolean => {
+          if (member.kind === 'ClassFieldDeclaration') {
+            return this.typeUsesString(member.type);
+          }
+
+          return (
+            member.parameters.some((parameter: FunctionParameterNode): boolean =>
+              this.typeUsesString(parameter.type)
+            ) ||
+            (member.returnType !== null && this.typeUsesString(member.returnType)) ||
+            usesStringTypeInStatements(member.body.body)
+          );
+        });
       }
 
-      if (statement.kind === 'ReturnStatement') {
-        return false;
-      }
-
-      return (
-        statement.kind === 'VariableDeclaration' &&
-        ((statement.type.kind === 'NamedType' && statement.type.name === 'string') ||
-          (statement.type.kind === 'NullableType' && statement.type.type.name === 'string'))
-      );
-    });
-  }
-
-  private usesStringTypeInTopLevels(topLevels: TopLevelNode[]): boolean {
-    return topLevels.some((topLevel: TopLevelNode): boolean => {
       if (topLevel.kind === 'FunctionDeclaration') {
         return (
-          (topLevel.returnType.kind === 'NamedType' && topLevel.returnType.name === 'string') ||
-          (topLevel.returnType.kind === 'NullableType' && topLevel.returnType.type.name === 'string') ||
-          topLevel.parameters.some((parameter: FunctionParameterNode): boolean => {
-            return (
-              (parameter.type.kind === 'NamedType' && parameter.type.name === 'string') ||
-              (parameter.type.kind === 'NullableType' && parameter.type.type.name === 'string')
-            );
-          }) ||
-          this.usesStringTypeInStatements(topLevel.body.body)
+          this.typeUsesString(topLevel.returnType) ||
+          topLevel.parameters.some((parameter: FunctionParameterNode): boolean =>
+            this.typeUsesString(parameter.type)
+          ) ||
+          usesStringTypeInStatements(topLevel.body.body)
         );
       }
 
-      return this.usesStringTypeInStatements([topLevel]);
+      return false;
     });
   }
 }

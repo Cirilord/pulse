@@ -1,6 +1,7 @@
 export type PrimitiveTypeName = 'boolean' | 'byte' | 'char' | 'double' | 'float' | 'int' | 'string' | 'void';
 
 export type ResolvedType = {
-  name: PrimitiveTypeName;
+  kind: 'class' | 'primitive';
+  name: string;
   nullable: boolean;
 };

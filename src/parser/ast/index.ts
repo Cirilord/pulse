@@ -1,6 +1,9 @@
 export type { BaseNode } from './base-node.js';
 export type { BlockStatementNode } from './block-statement-node.js';
 export type { BreakStatementNode } from './break-statement-node.js';
+export type { ClassDeclarationNode, ClassMemberDeclarationNode } from './class-declaration-node.js';
+export type { AccessModifier, ClassFieldDeclarationNode } from './class-field-declaration-node.js';
+export type { ClassMethodDeclarationNode } from './class-method-declaration-node.js';
 export type { ContinueStatementNode } from './continue-statement-node.js';
 export type { DoWhileStatementNode } from './do-while-statement-node.js';
 export type { ForInitializerNode, ForStatementNode } from './for-statement-node.js';
@@ -17,8 +20,10 @@ export type {
   GroupingExpressionNode,
   IdentifierExpressionNode,
   IntegerLiteralNode,
+  MemberExpressionNode,
   NullLiteralNode,
   StringLiteralNode,
+  ThisExpressionNode,
   UnaryExpressionNode,
   UnaryOperator,
 } from './expression-node.js';
