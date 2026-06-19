@@ -8,6 +8,8 @@ import type {
   ExpressionStatementNode,
   BinaryExpressionNode,
   ConditionalExpressionNode,
+  ForInitializerNode,
+  ForStatementNode,
   IfStatementNode,
   ProgramNode,
   StatementNode,
@@ -116,6 +118,18 @@ export class CGenerator {
       }
 
       if (statement.kind === 'DoWhileStatement') {
+        this.collectNullableTypeNamesFromStatements(statement.body.body, typeNames);
+        continue;
+      }
+
+      if (statement.kind === 'ForStatement') {
+        if (
+          statement.initializer.kind === 'VariableDeclaration' &&
+          statement.initializer.type.kind === 'NullableType'
+        ) {
+          typeNames.add(statement.initializer.type.type.name);
+        }
+
         this.collectNullableTypeNamesFromStatements(statement.body.body, typeNames);
         continue;
       }
@@ -335,6 +349,37 @@ export class CGenerator {
     return `${this.generateExpression(statement.expression)};`;
   }
 
+  private generateForInitializer(initializer: ForInitializerNode): string {
+    if (initializer.kind === 'VariableDeclaration') {
+      const declaration: string = this.generateVariableDeclaration(initializer);
+
+      return declaration.slice(0, -1);
+    }
+
+    return this.generateExpression(initializer);
+  }
+
+  private generateForStatement(statement: ForStatementNode, indentLevel: number): string[] {
+    this.pushScope();
+
+    const initializer: string = this.generateForInitializer(statement.initializer);
+    const condition: string = this.generateExpression(statement.condition);
+    const update: string = this.generateExpression(statement.update);
+    const lines: string[] = [`${this.indent(indentLevel)}for (${initializer}; ${condition}; ${update}) {`];
+
+    this.pushScope();
+
+    for (const bodyStatement of statement.body.body) {
+      lines.push(...this.generateStatement(bodyStatement, indentLevel + 1));
+    }
+
+    this.popScope();
+    this.popScope();
+    lines.push(`${this.indent(indentLevel)}}`);
+
+    return lines;
+  }
+
   private generateIfStatement(statement: IfStatementNode, indentLevel: number, isElseIf: boolean = false): string[] {
     const openingLine: string = `${this.indent(indentLevel)}${isElseIf ? 'else if' : 'if'} (${this.generateExpression(statement.condition)}) {`;
     const lines: string[] = this.generateScopedBlock(statement.thenBranch.body, indentLevel, openingLine);
@@ -471,6 +516,8 @@ export class CGenerator {
         return this.generateDoWhileStatement(statement, indentLevel);
       case 'ExpressionStatement':
         return [`${this.indent(indentLevel)}${this.generateExpressionStatement(statement)}`];
+      case 'ForStatement':
+        return this.generateForStatement(statement, indentLevel);
       case 'IfStatement':
         return this.generateIfStatement(statement, indentLevel);
       case 'VariableDeclaration':
@@ -778,6 +825,41 @@ export class CGenerator {
         return bodyUsesStringEquality;
       }
 
+      if (statement.kind === 'ForStatement') {
+        if (statement.initializer.kind === 'VariableDeclaration') {
+          const initializerUsesStringEquality: boolean = this.expressionUsesStringEquality(
+            statement.initializer.initializer
+          );
+          this.pushScope();
+          this.peekScope().set(statement.initializer.name.name, statement.initializer.type);
+          const conditionUsesStringEquality: boolean = this.expressionUsesStringEquality(statement.condition);
+          const updateUsesStringEquality: boolean = this.expressionUsesStringEquality(statement.update);
+          const bodyUsesStringEquality: boolean = this.usesStringEqualityInStatements(statement.body.body);
+          this.popScope();
+
+          return (
+            initializerUsesStringEquality ||
+            conditionUsesStringEquality ||
+            updateUsesStringEquality ||
+            bodyUsesStringEquality
+          );
+        }
+
+        this.pushScope();
+        const initializerUsesStringEquality: boolean = this.expressionUsesStringEquality(statement.initializer);
+        const conditionUsesStringEquality: boolean = this.expressionUsesStringEquality(statement.condition);
+        const updateUsesStringEquality: boolean = this.expressionUsesStringEquality(statement.update);
+        const bodyUsesStringEquality: boolean = this.usesStringEqualityInStatements(statement.body.body);
+        this.popScope();
+
+        return (
+          initializerUsesStringEquality ||
+          conditionUsesStringEquality ||
+          updateUsesStringEquality ||
+          bodyUsesStringEquality
+        );
+      }
+
       if (statement.kind === 'BreakStatement' || statement.kind === 'ContinueStatement') {
         return false;
       }
@@ -830,6 +912,16 @@ export class CGenerator {
 
       if (statement.kind === 'DoWhileStatement') {
         return this.usesStringTypeInStatements(statement.body.body);
+      }
+
+      if (statement.kind === 'ForStatement') {
+        return (
+          (statement.initializer.kind === 'VariableDeclaration' &&
+            ((statement.initializer.type.kind === 'NamedType' && statement.initializer.type.name === 'string') ||
+              (statement.initializer.type.kind === 'NullableType' &&
+                statement.initializer.type.type.name === 'string'))) ||
+          this.usesStringTypeInStatements(statement.body.body)
+        );
       }
 
       if (statement.kind === 'WhileStatement') {

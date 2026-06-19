@@ -10,6 +10,7 @@ import type {
   DoWhileStatementNode,
   ExpressionNode,
   ExpressionStatementNode,
+  ForStatementNode,
   IdentifierExpressionNode,
   IfStatementNode,
   NamedTypeNode,
@@ -360,6 +361,39 @@ export class Checker {
     this.resolveExpressionType(statement.expression);
   }
 
+  private checkForStatement(statement: ForStatementNode): void {
+    this.pushScope();
+
+    try {
+      if (statement.initializer.kind === 'VariableDeclaration') {
+        this.checkVariableDeclaration(statement.initializer);
+      } else {
+        this.resolveExpressionType(statement.initializer);
+      }
+
+      const conditionType: ResolvedType = this.resolveExpressionType(statement.condition);
+
+      if (conditionType.nullable || conditionType.name !== 'boolean') {
+        throw new CheckerError(
+          'For statements require a non-nullable boolean condition.',
+          statement.condition.location
+        );
+      }
+
+      this.resolveExpressionType(statement.update);
+
+      this.loopDepth += 1;
+
+      try {
+        this.checkBlockStatement(statement.body);
+      } finally {
+        this.loopDepth -= 1;
+      }
+    } finally {
+      this.popScope();
+    }
+  }
+
   private checkIfStatement(statement: IfStatementNode): void {
     const conditionType: ResolvedType = this.resolveExpressionType(statement.condition);
 
@@ -397,6 +431,9 @@ export class Checker {
         return;
       case 'ExpressionStatement':
         this.checkExpressionStatement(statement);
+        return;
+      case 'ForStatement':
+        this.checkForStatement(statement);
         return;
       case 'IfStatement':
         this.checkIfStatement(statement);

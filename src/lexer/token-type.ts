@@ -16,6 +16,7 @@ export enum TokenType {
   Equal = 'Equal',
   EqualEqual = 'EqualEqual',
   False = 'False',
+  For = 'For',
   GreaterThan = 'GreaterThan',
   GreaterThanEqual = 'GreaterThanEqual',
   Identifier = 'Identifier',

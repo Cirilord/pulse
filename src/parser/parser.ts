@@ -12,6 +12,8 @@ import type {
   DoWhileStatementNode,
   ExpressionNode,
   ExpressionStatementNode,
+  ForInitializerNode,
+  ForStatementNode,
   IdentifierNode,
   IdentifierExpressionNode,
   IfStatementNode,
@@ -501,6 +503,46 @@ export class Parser {
     };
   }
 
+  private parseForInitializer(): ForInitializerNode {
+    if (this.match(TokenType.Var, TokenType.Val)) {
+      return this.parseVariableDeclaration(this.previous());
+    }
+
+    const expression: ExpressionNode = this.parseExpression();
+    const semicolonToken: Token = this.consume(TokenType.Semicolon, 'Expected ";" after the for initializer.');
+
+    return {
+      expression,
+      kind: 'ExpressionStatement',
+      location: this.mergeLocations(expression.location, semicolonToken.location),
+    }.expression;
+  }
+
+  private parseForStatement(keywordToken: Token): ForStatementNode {
+    this.consume(TokenType.LeftParen, 'Expected "(" after "for".');
+
+    const initializer: ForInitializerNode = this.parseForInitializer();
+    const condition: ExpressionNode = this.parseExpression();
+
+    this.consume(TokenType.Semicolon, 'Expected ";" after the for condition.');
+
+    const update: ExpressionNode = this.parseExpression();
+
+    this.consume(TokenType.RightParen, 'Expected ")" after the for update.');
+    this.consume(TokenType.LeftBrace, 'Expected "{" after the for clause.');
+
+    const body: BlockStatementNode = this.parseBlockStatement();
+
+    return {
+      body,
+      condition,
+      initializer,
+      kind: 'ForStatement',
+      location: this.mergeLocations(keywordToken.location, body.location),
+      update,
+    };
+  }
+
   private parseIfStatement(keywordToken: Token): IfStatementNode {
     this.consume(TokenType.LeftParen, 'Expected "(" after "if".');
 
@@ -710,6 +752,10 @@ export class Parser {
 
     if (this.match(TokenType.Do)) {
       return this.parseDoWhileStatement(this.previous());
+    }
+
+    if (this.match(TokenType.For)) {
+      return this.parseForStatement(this.previous());
     }
 
     if (this.match(TokenType.If)) {
