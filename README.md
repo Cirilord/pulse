@@ -7,6 +7,8 @@ This README should be kept up to date as the project evolves.
 
 - `docs/language.md` for the general language overview
 - `docs/variables.md` for variable and nullability rules
+- `docs/expressions.md` for expression rules
+- `docs/control-flow.md` for conditions, loops, and block rules
 
 ## Project Status
 

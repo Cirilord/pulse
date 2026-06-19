@@ -41,23 +41,5 @@ val alias = null;
 
 - `string?` means `string | null`
 - `return null;` is only valid when the expected return type is nullable
-- Numeric variables can be used in arithmetic expressions with `+`, `-`, `*`, `/`, and `%`
-- Comparison operators `==`, `!=`, `<`, `<=`, `>`, and `>=` are available
-- Nullable values can be compared with `==` and `!=`
-- Ordered comparisons do not accept nullable operands
-- `name == null` and `name != null` are valid when `name` is nullable
-- `a == b` and `a != b` are valid when both operands use the same nullable type
-- Null coalescing with `??` is available for nullable values and `null` literals
-- Compound assignments `&&=`, `||=`, and `??=` are available for compatible boolean and nullable variables
-- Bitwise operators `&`, `|`, `^`, `<<`, `>>`, and `~` are available for `int` and `byte`
-- Logical operators `&&`, `||`, and `!` are available for boolean expressions
-- Conditional expressions `condition ? whenTrue : whenFalse` are available when the condition is a non-nullable `boolean` and both branches resolve to the same type
-- `if`, `elif`, and `else` conditions also require a non-nullable `boolean`
-- `while`, `do while`, and `for` conditions also require a non-nullable `boolean`
-- Pulse does not use truthy or falsy coercion for conditions or logical negation
-- Values such as `0`, `""`, `null`, and `boolean?` must be compared explicitly instead of being treated as booleans
-- Block scopes allow variable shadowing, so an inner block may declare a new variable with the same name as an outer declaration
-- Unary `+` and unary `-` are available for numeric expressions
-- Parentheses can be used to group expressions and control precedence
+- Variables with nullable types are currently emitted as internal `<base>_nullable` structs in the C backend, such as `string_t_nullable`
 - The current C backend maps Pulse `string` values to an internal `string_t` runtime struct
-- Nullable variables are emitted as internal `<base>_nullable` structs such as `string_t_nullable`
