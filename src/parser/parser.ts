@@ -11,6 +11,7 @@ import type {
   ExpressionStatementNode,
   IdentifierNode,
   IdentifierExpressionNode,
+  IfStatementNode,
   NamedTypeNode,
   NullableTypeNode,
   ProgramNode,
@@ -395,6 +396,33 @@ export class Parser {
     return conditionalExpression;
   }
 
+  private parseElifBranch(keywordToken: Token): IfStatementNode {
+    this.consume(TokenType.LeftParen, 'Expected "(" after "elif".');
+
+    const condition: ExpressionNode = this.parseExpression();
+
+    this.consume(TokenType.RightParen, 'Expected ")" after the elif condition.');
+    this.consume(TokenType.LeftBrace, 'Expected "{" after the elif condition.');
+
+    const thenBranch: BlockStatementNode = this.parseBlockStatement();
+    let elseBranch: BlockStatementNode | IfStatementNode | null = null;
+
+    if (this.match(TokenType.Elif)) {
+      elseBranch = this.parseElifBranch(this.previous());
+    } else if (this.match(TokenType.Else)) {
+      this.consume(TokenType.LeftBrace, 'Expected "{" after "else".');
+      elseBranch = this.parseBlockStatement();
+    }
+
+    return {
+      condition,
+      elseBranch,
+      kind: 'IfStatement',
+      location: this.mergeLocations(keywordToken.location, (elseBranch ?? thenBranch).location),
+      thenBranch,
+    };
+  }
+
   private parseEqualityExpression(): ExpressionNode {
     let expression: ExpressionNode = this.parseComparisonExpression();
 
@@ -427,6 +455,33 @@ export class Parser {
       expression,
       kind: 'ExpressionStatement',
       location: this.mergeLocations(expression.location, semicolonToken.location),
+    };
+  }
+
+  private parseIfStatement(keywordToken: Token): IfStatementNode {
+    this.consume(TokenType.LeftParen, 'Expected "(" after "if".');
+
+    const condition: ExpressionNode = this.parseExpression();
+
+    this.consume(TokenType.RightParen, 'Expected ")" after the if condition.');
+    this.consume(TokenType.LeftBrace, 'Expected "{" after the if condition.');
+
+    const thenBranch: BlockStatementNode = this.parseBlockStatement();
+    let elseBranch: BlockStatementNode | IfStatementNode | null = null;
+
+    if (this.match(TokenType.Elif)) {
+      elseBranch = this.parseElifBranch(this.previous());
+    } else if (this.match(TokenType.Else)) {
+      this.consume(TokenType.LeftBrace, 'Expected "{" after "else".');
+      elseBranch = this.parseBlockStatement();
+    }
+
+    return {
+      condition,
+      elseBranch,
+      kind: 'IfStatement',
+      location: this.mergeLocations(keywordToken.location, (elseBranch ?? thenBranch).location),
+      thenBranch,
     };
   }
 
@@ -602,6 +657,10 @@ export class Parser {
   }
 
   private parseStatement(): StatementNode {
+    if (this.match(TokenType.If)) {
+      return this.parseIfStatement(this.previous());
+    }
+
     if (this.match(TokenType.LeftBrace)) {
       return this.parseBlockStatement();
     }

@@ -8,6 +8,7 @@ import type {
   ExpressionNode,
   ExpressionStatementNode,
   IdentifierExpressionNode,
+  IfStatementNode,
   NamedTypeNode,
   ProgramNode,
   StatementNode,
@@ -324,6 +325,27 @@ export class Checker {
     this.resolveExpressionType(statement.expression);
   }
 
+  private checkIfStatement(statement: IfStatementNode): void {
+    const conditionType: ResolvedType = this.resolveExpressionType(statement.condition);
+
+    if (conditionType.nullable || conditionType.name !== 'boolean') {
+      throw new CheckerError('If statements require a non-nullable boolean condition.', statement.condition.location);
+    }
+
+    this.checkBlockStatement(statement.thenBranch);
+
+    if (statement.elseBranch === null) {
+      return;
+    }
+
+    if (statement.elseBranch.kind === 'BlockStatement') {
+      this.checkBlockStatement(statement.elseBranch);
+      return;
+    }
+
+    this.checkIfStatement(statement.elseBranch);
+  }
+
   private checkStatement(statement: StatementNode): void {
     switch (statement.kind) {
       case 'BlockStatement':
@@ -331,6 +353,9 @@ export class Checker {
         return;
       case 'ExpressionStatement':
         this.checkExpressionStatement(statement);
+        return;
+      case 'IfStatement':
+        this.checkIfStatement(statement);
         return;
       case 'VariableDeclaration':
         this.checkVariableDeclaration(statement);

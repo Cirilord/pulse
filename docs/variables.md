@@ -52,6 +52,7 @@ val alias = null;
 - Bitwise operators `&`, `|`, `^`, `<<`, `>>`, and `~` are available for `int` and `byte`
 - Logical operators `&&`, `||`, and `!` are available for boolean expressions
 - Conditional expressions `condition ? whenTrue : whenFalse` are available when the condition is a non-nullable `boolean` and both branches resolve to the same type
+- `if`, `elif`, and `else` conditions also require a non-nullable `boolean`
 - Pulse does not use truthy or falsy coercion for conditions or logical negation
 - Values such as `0`, `""`, `null`, and `boolean?` must be compared explicitly instead of being treated as booleans
 - Block scopes allow variable shadowing, so an inner block may declare a new variable with the same name as an outer declaration

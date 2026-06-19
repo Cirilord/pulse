@@ -19,6 +19,7 @@ export type {
 } from './expression-node.js';
 export type { ExpressionStatementNode } from './expression-statement-node.js';
 export type { IdentifierNode } from './identifier-node.js';
+export type { IfStatementNode } from './if-statement-node.js';
 export type { ProgramNode } from './program-node.js';
 export type { StatementNode } from './statement-node.js';
 export type { NamedTypeNode, NullableTypeNode, TypeNode } from './type-node.js';

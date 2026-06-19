@@ -5,6 +5,7 @@ import type {
   ExpressionStatementNode,
   BinaryExpressionNode,
   ConditionalExpressionNode,
+  IfStatementNode,
   ProgramNode,
   StatementNode,
   TypeNode,
@@ -106,6 +107,20 @@ export class CGenerator {
         continue;
       }
 
+      if (statement.kind === 'IfStatement') {
+        this.collectNullableTypeNamesFromStatements(statement.thenBranch.body, typeNames);
+
+        if (statement.elseBranch?.kind === 'BlockStatement') {
+          this.collectNullableTypeNamesFromStatements(statement.elseBranch.body, typeNames);
+        }
+
+        if (statement.elseBranch?.kind === 'IfStatement') {
+          this.collectNullableTypeNamesFromStatements([statement.elseBranch], typeNames);
+        }
+
+        continue;
+      }
+
       if (statement.kind === 'VariableDeclaration' && statement.type.kind === 'NullableType') {
         typeNames.add(statement.type.type.name);
       }
@@ -167,18 +182,7 @@ export class CGenerator {
   }
 
   private generateBlockStatement(statement: BlockStatementNode, indentLevel: number): string[] {
-    const lines: string[] = [`${this.indent(indentLevel)}{`];
-
-    this.pushScope();
-
-    for (const innerStatement of statement.body) {
-      lines.push(...this.generateStatement(innerStatement, indentLevel + 1));
-    }
-
-    this.popScope();
-    lines.push(`${this.indent(indentLevel)}}`);
-
-    return lines;
+    return this.generateScopedBlock(statement.body, indentLevel, `${this.indent(indentLevel)}{`);
   }
 
   private generateConditionalExpression(expression: ConditionalExpressionNode): string {
@@ -290,6 +294,26 @@ export class CGenerator {
     return `${this.generateExpression(statement.expression)};`;
   }
 
+  private generateIfStatement(statement: IfStatementNode, indentLevel: number, isElseIf: boolean = false): string[] {
+    const openingLine: string = `${this.indent(indentLevel)}${isElseIf ? 'else if' : 'if'} (${this.generateExpression(statement.condition)}) {`;
+    const lines: string[] = this.generateScopedBlock(statement.thenBranch.body, indentLevel, openingLine);
+
+    if (statement.elseBranch === null) {
+      return lines;
+    }
+
+    if (statement.elseBranch.kind === 'BlockStatement') {
+      lines.push(
+        ...this.generateScopedBlock(statement.elseBranch.body, indentLevel, `${this.indent(indentLevel)}else {`)
+      );
+      return lines;
+    }
+
+    lines.push(...this.generateIfStatement(statement.elseBranch, indentLevel, true));
+
+    return lines;
+  }
+
   private generateLogicalAssignmentExpression(expression: ExpressionNode & { kind: 'AssignmentExpression' }): string {
     const operator: string = expression.operator === '&&=' ? '&&' : '||';
     const valueExpression: string = this.generateExpression(expression.value);
@@ -379,12 +403,29 @@ export class CGenerator {
     return equalityExpression;
   }
 
+  private generateScopedBlock(statements: StatementNode[], indentLevel: number, openingLine: string): string[] {
+    const lines: string[] = [openingLine];
+
+    this.pushScope();
+
+    for (const statement of statements) {
+      lines.push(...this.generateStatement(statement, indentLevel + 1));
+    }
+
+    this.popScope();
+    lines.push(`${this.indent(indentLevel)}}`);
+
+    return lines;
+  }
+
   private generateStatement(statement: StatementNode, indentLevel: number): string[] {
     switch (statement.kind) {
       case 'BlockStatement':
         return this.generateBlockStatement(statement, indentLevel);
       case 'ExpressionStatement':
         return [`${this.indent(indentLevel)}${this.generateExpressionStatement(statement)}`];
+      case 'IfStatement':
+        return this.generateIfStatement(statement, indentLevel);
       case 'VariableDeclaration':
         return [`${this.indent(indentLevel)}${this.generateVariableDeclaration(statement)}`];
     }
@@ -642,6 +683,34 @@ export class CGenerator {
         return blockUsesStringEquality;
       }
 
+      if (statement.kind === 'IfStatement') {
+        if (this.expressionUsesStringEquality(statement.condition)) {
+          return true;
+        }
+
+        this.pushScope();
+        const thenBranchUsesStringEquality: boolean = this.usesStringEqualityInStatements(statement.thenBranch.body);
+        this.popScope();
+
+        if (thenBranchUsesStringEquality) {
+          return true;
+        }
+
+        if (statement.elseBranch === null) {
+          return false;
+        }
+
+        if (statement.elseBranch.kind === 'BlockStatement') {
+          this.pushScope();
+          const elseBranchUsesStringEquality: boolean = this.usesStringEqualityInStatements(statement.elseBranch.body);
+          this.popScope();
+
+          return elseBranchUsesStringEquality;
+        }
+
+        return this.usesStringEqualityInStatements([statement.elseBranch]);
+      }
+
       if (statement.kind === 'ExpressionStatement') {
         return this.expressionUsesStringEquality(statement.expression);
       }
@@ -665,6 +734,15 @@ export class CGenerator {
     return statements.some((statement: StatementNode): boolean => {
       if (statement.kind === 'BlockStatement') {
         return this.usesStringTypeInStatements(statement.body);
+      }
+
+      if (statement.kind === 'IfStatement') {
+        return (
+          this.usesStringTypeInStatements(statement.thenBranch.body) ||
+          (statement.elseBranch?.kind === 'BlockStatement' &&
+            this.usesStringTypeInStatements(statement.elseBranch.body)) ||
+          (statement.elseBranch?.kind === 'IfStatement' && this.usesStringTypeInStatements([statement.elseBranch]))
+        );
       }
 
       return (

@@ -1,5 +1,6 @@
 import type { BlockStatementNode } from './block-statement-node.js';
 import type { ExpressionStatementNode } from './expression-statement-node.js';
+import type { IfStatementNode } from './if-statement-node.js';
 import type { VariableDeclarationNode } from './variable-declaration-node.js';
 
-export type StatementNode = BlockStatementNode | ExpressionStatementNode | VariableDeclarationNode;
+export type StatementNode = BlockStatementNode | ExpressionStatementNode | IfStatementNode | VariableDeclarationNode;
