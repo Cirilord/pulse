@@ -1,15 +1,15 @@
 #include <stdbool.h>
 #include <stddef.h>
 
-int sum(int a, int b);
-void logValue(int value);
+int sum(const int a, const int b);
+void logValue(const int value);
 int main(void);
 
-int sum(int a, int b) {
+int sum(const int a, const int b) {
   return (a + b);
 }
 
-void logValue(int value) {
+void logValue(const int value) {
   return;
 }
 
