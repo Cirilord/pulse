@@ -15,6 +15,7 @@ import type {
   TypeNode,
   UnaryExpressionNode,
   VariableDeclarationNode,
+  WhileStatementNode,
 } from '../parser/ast/index.js';
 
 const PRIMITIVE_TYPES: ReadonlySet<string> = new Set<PrimitiveTypeName>([
@@ -360,6 +361,9 @@ export class Checker {
       case 'VariableDeclaration':
         this.checkVariableDeclaration(statement);
         return;
+      case 'WhileStatement':
+        this.checkWhileStatement(statement);
+        return;
     }
   }
 
@@ -382,6 +386,19 @@ export class Checker {
       mutability: declaration.mutability,
       type: declaredType,
     });
+  }
+
+  private checkWhileStatement(statement: WhileStatementNode): void {
+    const conditionType: ResolvedType = this.resolveExpressionType(statement.condition);
+
+    if (conditionType.nullable || conditionType.name !== 'boolean') {
+      throw new CheckerError(
+        'While statements require a non-nullable boolean condition.',
+        statement.condition.location
+      );
+    }
+
+    this.checkBlockStatement(statement.body);
   }
 
   private isBitwiseAssignmentOperator(operator: AssignmentExpressionNode['operator']): boolean {

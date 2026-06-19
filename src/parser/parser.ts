@@ -20,6 +20,7 @@ import type {
   UnaryExpressionNode,
   UnaryOperator,
   VariableDeclarationNode,
+  WhileStatementNode,
 } from './ast/index.js';
 
 export class ParserError extends Error {
@@ -661,6 +662,10 @@ export class Parser {
       return this.parseIfStatement(this.previous());
     }
 
+    if (this.match(TokenType.While)) {
+      return this.parseWhileStatement(this.previous());
+    }
+
     if (this.match(TokenType.LeftBrace)) {
       return this.parseBlockStatement();
     }
@@ -742,6 +747,24 @@ export class Parser {
       mutability: mutabilityToken.type === TokenType.Var ? 'var' : 'val',
       name: nameNode,
       type: typeNode,
+    };
+  }
+
+  private parseWhileStatement(keywordToken: Token): WhileStatementNode {
+    this.consume(TokenType.LeftParen, 'Expected "(" after "while".');
+
+    const condition: ExpressionNode = this.parseExpression();
+
+    this.consume(TokenType.RightParen, 'Expected ")" after the while condition.');
+    this.consume(TokenType.LeftBrace, 'Expected "{" after the while condition.');
+
+    const body: BlockStatementNode = this.parseBlockStatement();
+
+    return {
+      body,
+      condition,
+      kind: 'WhileStatement',
+      location: this.mergeLocations(keywordToken.location, body.location),
     };
   }
 

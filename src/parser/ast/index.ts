@@ -24,3 +24,4 @@ export type { ProgramNode } from './program-node.js';
 export type { StatementNode } from './statement-node.js';
 export type { NamedTypeNode, NullableTypeNode, TypeNode } from './type-node.js';
 export type { VariableDeclarationNode } from './variable-declaration-node.js';
+export type { WhileStatementNode } from './while-statement-node.js';

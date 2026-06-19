@@ -9,4 +9,5 @@ export const KEYWORDS: ReadonlyMap<string, TokenType> = new Map<string, TokenTyp
   ['true', TokenType.True],
   ['val', TokenType.Val],
   ['var', TokenType.Var],
+  ['while', TokenType.While],
 ]);

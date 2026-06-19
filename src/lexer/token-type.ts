@@ -52,6 +52,7 @@ export enum TokenType {
   True = 'True',
   Val = 'Val',
   Var = 'Var',
+  While = 'While',
   LeftShift = 'LeftShift',
   LeftShiftEqual = 'LeftShiftEqual',
   PipeEqual = 'PipeEqual',

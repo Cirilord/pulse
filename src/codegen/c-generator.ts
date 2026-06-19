@@ -10,6 +10,7 @@ import type {
   StatementNode,
   TypeNode,
   VariableDeclarationNode,
+  WhileStatementNode,
 } from '../parser/ast/index.js';
 
 export class CGeneratorError extends Error {
@@ -118,6 +119,11 @@ export class CGenerator {
           this.collectNullableTypeNamesFromStatements([statement.elseBranch], typeNames);
         }
 
+        continue;
+      }
+
+      if (statement.kind === 'WhileStatement') {
+        this.collectNullableTypeNamesFromStatements(statement.body.body, typeNames);
         continue;
       }
 
@@ -428,6 +434,8 @@ export class CGenerator {
         return this.generateIfStatement(statement, indentLevel);
       case 'VariableDeclaration':
         return [`${this.indent(indentLevel)}${this.generateVariableDeclaration(statement)}`];
+      case 'WhileStatement':
+        return this.generateWhileStatement(statement, indentLevel);
     }
   }
 
@@ -456,6 +464,12 @@ export class CGenerator {
     this.peekScope().set(declaration.name.name, declaration.type);
 
     return `${cType} ${declaration.name.name} = ${initializer};`;
+  }
+
+  private generateWhileStatement(statement: WhileStatementNode, indentLevel: number): string[] {
+    const openingLine: string = `${this.indent(indentLevel)}while (${this.generateExpression(statement.condition)}) {`;
+
+    return this.generateScopedBlock(statement.body.body, indentLevel, openingLine);
   }
 
   private getDefaultValue(typeName: string): string {
@@ -711,6 +725,18 @@ export class CGenerator {
         return this.usesStringEqualityInStatements([statement.elseBranch]);
       }
 
+      if (statement.kind === 'WhileStatement') {
+        if (this.expressionUsesStringEquality(statement.condition)) {
+          return true;
+        }
+
+        this.pushScope();
+        const bodyUsesStringEquality: boolean = this.usesStringEqualityInStatements(statement.body.body);
+        this.popScope();
+
+        return bodyUsesStringEquality;
+      }
+
       if (statement.kind === 'ExpressionStatement') {
         return this.expressionUsesStringEquality(statement.expression);
       }
@@ -743,6 +769,10 @@ export class CGenerator {
             this.usesStringTypeInStatements(statement.elseBranch.body)) ||
           (statement.elseBranch?.kind === 'IfStatement' && this.usesStringTypeInStatements([statement.elseBranch]))
         );
+      }
+
+      if (statement.kind === 'WhileStatement') {
+        return this.usesStringTypeInStatements(statement.body.body);
       }
 
       return (
