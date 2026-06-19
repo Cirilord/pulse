@@ -17,6 +17,7 @@ This document tracks the current class rules in Pulse.
 - `Type.method(...)` calls a static method
 - `value.method(...)` calls an instance method
 - `=` copies values
+- `Error` is a builtin class documented in `docs/errors.md`
 
 ## Valid Example
 

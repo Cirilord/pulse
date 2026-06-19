@@ -1,5 +1,6 @@
 /* eslint-disable @typescript-eslint/member-ordering */
 import type { PrimitiveTypeName, ResolvedType } from './types.js';
+import { createBuiltinErrorClassDeclaration } from '../builtins/error-class.js';
 import { type TokenLocation } from '../lexer/token.js';
 import type {
   AssignmentExpressionNode,
@@ -144,6 +145,7 @@ export class Checker {
     this.loopDepth = 0;
     this.scopes.length = 0;
     this.pushScope();
+    this.declareBuiltinClasses();
 
     for (const topLevel of program.body) {
       if (topLevel.kind === 'ClassDeclaration') {
@@ -162,6 +164,10 @@ export class Checker {
     }
 
     this.popScope();
+  }
+
+  private declareBuiltinClasses(): void {
+    this.declareClass(createBuiltinErrorClassDeclaration());
   }
 
   private assertExpressionAssignable(targetType: ResolvedType, expression: ExpressionNode): void {

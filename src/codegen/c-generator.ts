@@ -1,4 +1,5 @@
 /* eslint-disable @typescript-eslint/member-ordering */
+import { BUILTIN_ERROR_CLASS_NAME, createBuiltinErrorClassDeclaration } from '../builtins/error-class.js';
 import { type TokenLocation } from '../lexer/token.js';
 import type {
   AssignmentExpressionNode,
@@ -81,9 +82,14 @@ export class CGenerator {
     this.collectFunctions(program);
     this.scopes.length = 0;
 
-    const usesStringType: boolean = this.usesStringType(program);
+    const usesBuiltinError: boolean = this.classes.has(BUILTIN_ERROR_CLASS_NAME);
+    const usesStringType: boolean = usesBuiltinError || this.usesStringType(program);
     const usesStringEquality: boolean = this.usesStringEquality(program);
     const lines: string[] = ['#include <stdbool.h>', '#include <stddef.h>'];
+
+    if (usesBuiltinError) {
+      lines.push('#include <stdio.h>', '#include <stdlib.h>');
+    }
 
     if (usesStringEquality) {
       lines.push('#include <string.h>');
@@ -117,6 +123,11 @@ export class CGenerator {
     }
 
     this.emitClassDefinitions(lines);
+
+    if (usesBuiltinError) {
+      this.emitRuntimeErrorHandler(lines);
+    }
+
     this.emitNullableTypeDefinitions(program, lines);
     this.emitPrototypes(program, lines);
     this.emitImplementations(program, lines);
@@ -125,6 +136,22 @@ export class CGenerator {
   }
 
   private collectClasses(program: ProgramNode): void {
+    if (this.usesBuiltinError(program)) {
+      const errorClassDeclaration: ClassDeclarationNode = createBuiltinErrorClassDeclaration();
+
+      this.classes.set(BUILTIN_ERROR_CLASS_NAME, {
+        constructorMethod: {
+          declaration: errorClassDeclaration.members[1] as ClassMethodDeclarationNode,
+          mutatesThis: true,
+        },
+        declaration: errorClassDeclaration,
+        fields: new Map<string, ClassFieldDeclarationNode>([
+          ['message', errorClassDeclaration.members[0] as ClassFieldDeclarationNode],
+        ]),
+        methods: new Map<string, ClassMethodCodegenEntry>(),
+      });
+    }
+
     for (const topLevel of program.body) {
       if (topLevel.kind !== 'ClassDeclaration') {
         continue;
@@ -288,6 +315,14 @@ export class CGenerator {
       lines.push(...this.generateFunctionDeclaration(functionDeclaration));
       lines.push('');
     }
+  }
+
+  private emitRuntimeErrorHandler(lines: string[]): void {
+    lines.push(`void pulse__runtime__handle_error(const ${BUILTIN_ERROR_CLASS_NAME} error) {`);
+    lines.push('  fprintf(stderr, "%.*s\\n", (int)error.message.length, error.message.data);');
+    lines.push('  exit(EXIT_FAILURE);');
+    lines.push('}');
+    lines.push('');
   }
 
   private emitNullableTypeDefinitions(program: ProgramNode, lines: string[]): void {
@@ -1453,6 +1488,14 @@ export class CGenerator {
     return type.name === 'string';
   }
 
+  private typeUsesBuiltinError(type: TypeNode): boolean {
+    if (type.kind === 'NullableType') {
+      return type.type.name === BUILTIN_ERROR_CLASS_NAME;
+    }
+
+    return type.name === BUILTIN_ERROR_CLASS_NAME;
+  }
+
   private usesStringEquality(program: ProgramNode): boolean {
     const usesStringEqualityInStatements = (statements: StatementNode[]): boolean => {
       return statements.some((statement: StatementNode): boolean => {
@@ -1675,6 +1718,113 @@ export class CGenerator {
             this.typeUsesString(parameter.type)
           ) ||
           usesStringTypeInStatements(topLevel.body.body)
+        );
+      }
+
+      return false;
+    });
+  }
+
+  private usesBuiltinError(program: ProgramNode): boolean {
+    const expressionUsesBuiltinError = (expression: ExpressionNode): boolean => {
+      switch (expression.kind) {
+        case 'AssignmentExpression':
+          return expressionUsesBuiltinError(expression.target) || expressionUsesBuiltinError(expression.value);
+        case 'BinaryExpression':
+          return expressionUsesBuiltinError(expression.left) || expressionUsesBuiltinError(expression.right);
+        case 'BooleanLiteral':
+        case 'DoubleLiteral':
+        case 'IntegerLiteral':
+        case 'NullLiteral':
+        case 'StringLiteral':
+        case 'ThisExpression':
+          return false;
+        case 'CallExpression':
+          return (
+            (expression.callee.kind === 'IdentifierExpression' &&
+              expression.callee.name === BUILTIN_ERROR_CLASS_NAME) ||
+            expressionUsesBuiltinError(expression.callee) ||
+            expression.arguments.some(expressionUsesBuiltinError)
+          );
+        case 'ConditionalExpression':
+          return (
+            expressionUsesBuiltinError(expression.condition) ||
+            expressionUsesBuiltinError(expression.thenExpression) ||
+            expressionUsesBuiltinError(expression.elseExpression)
+          );
+        case 'GroupingExpression':
+        case 'UnaryExpression':
+          return expressionUsesBuiltinError(expression.expression);
+        case 'IdentifierExpression':
+          return false;
+        case 'MemberExpression':
+          return expressionUsesBuiltinError(expression.object);
+      }
+    };
+
+    const statementUsesBuiltinError = (statement: StatementNode): boolean => {
+      switch (statement.kind) {
+        case 'BlockStatement':
+          return statement.body.some(statementUsesBuiltinError);
+        case 'BreakStatement':
+        case 'ContinueStatement':
+          return false;
+        case 'DoWhileStatement':
+          return statement.body.body.some(statementUsesBuiltinError) || expressionUsesBuiltinError(statement.condition);
+        case 'ExpressionStatement':
+          return expressionUsesBuiltinError(statement.expression);
+        case 'ForStatement':
+          return (
+            (statement.initializer.kind === 'VariableDeclaration' &&
+              (this.typeUsesBuiltinError(statement.initializer.type) ||
+                expressionUsesBuiltinError(statement.initializer.initializer))) ||
+            (statement.initializer.kind !== 'VariableDeclaration' &&
+              expressionUsesBuiltinError(statement.initializer)) ||
+            expressionUsesBuiltinError(statement.condition) ||
+            expressionUsesBuiltinError(statement.update) ||
+            statement.body.body.some(statementUsesBuiltinError)
+          );
+        case 'IfStatement':
+          return (
+            expressionUsesBuiltinError(statement.condition) ||
+            statement.thenBranch.body.some(statementUsesBuiltinError) ||
+            (statement.elseBranch?.kind === 'BlockStatement' &&
+              statement.elseBranch.body.some(statementUsesBuiltinError)) ||
+            (statement.elseBranch?.kind === 'IfStatement' && statementUsesBuiltinError(statement.elseBranch))
+          );
+        case 'ReturnStatement':
+          return statement.expression !== null && expressionUsesBuiltinError(statement.expression);
+        case 'VariableDeclaration':
+          return this.typeUsesBuiltinError(statement.type) || expressionUsesBuiltinError(statement.initializer);
+        case 'WhileStatement':
+          return expressionUsesBuiltinError(statement.condition) || statement.body.body.some(statementUsesBuiltinError);
+      }
+    };
+
+    return program.body.some((topLevel: TopLevelNode): boolean => {
+      if (topLevel.kind === 'ClassDeclaration') {
+        return topLevel.members.some((member): boolean => {
+          if (member.kind === 'ClassFieldDeclaration') {
+            return this.typeUsesBuiltinError(member.type);
+          }
+
+          return (
+            member.parameters.some((parameter: FunctionParameterNode): boolean =>
+              this.typeUsesBuiltinError(parameter.type)
+            ) ||
+            (member.returnType !== null && this.typeUsesBuiltinError(member.returnType)) ||
+            member.body.body.some(statementUsesBuiltinError)
+          );
+        });
+      }
+
+      if (topLevel.kind === 'FunctionDeclaration') {
+        return (
+          this.typeUsesBuiltinError(topLevel.returnType) ||
+          topLevel.parameters.some((parameter: FunctionParameterNode): boolean =>
+            this.typeUsesBuiltinError(parameter.type)
+          ) ||
+          topLevel.body.body.some(statementUsesBuiltinError)
         );
       }
 
