@@ -1,8 +1,8 @@
-fn sum(a: int, b: int): int {
+fn sum(val a: int, val b: int): int {
   return a + b;
 }
 
-fn logValue(value: int): void {
+fn logValue(val value: int): void {
   return;
 }
 

@@ -31,7 +31,10 @@ describe('functions example', function describeFunctionsExample(): void {
     expect(program.body[0]).toMatchObject({
       kind: 'FunctionDeclaration',
       name: { name: 'sum' },
-      parameters: [{ name: { name: 'a' } }, { name: { name: 'b' } }],
+      parameters: [
+        { mutability: 'val', name: { name: 'a' } },
+        { mutability: 'val', name: { name: 'b' } },
+      ],
       returnType: { kind: 'NamedType', name: 'int' },
     });
 
@@ -62,7 +65,7 @@ describe('functions example', function describeFunctionsExample(): void {
   });
 
   test('rejects functions without an explicit final return', function testMissingReturn(): void {
-    const sourceCode = `${wrapInMain('  return 0;')}\n\nfn sum(a: int, b: int): int { val result: int = a + b; }`;
+    const sourceCode = `${wrapInMain('  return 0;')}\n\nfn sum(val a: int, val b: int): int { val result: int = a + b; }`;
     const lexer: Lexer = new Lexer(sourceCode);
     const parser: Parser = new Parser(lexer.tokenize());
     const checker: Checker = new Checker();
@@ -73,7 +76,7 @@ describe('functions example', function describeFunctionsExample(): void {
   });
 
   test('rejects void functions that return a value', function testVoidReturnValue(): void {
-    const sourceCode = `${wrapInMain('  return 0;')}\n\nfn logValue(value: int): void { return value; }`;
+    const sourceCode = `${wrapInMain('  return 0;')}\n\nfn logValue(val value: int): void { return value; }`;
     const lexer: Lexer = new Lexer(sourceCode);
     const parser: Parser = new Parser(lexer.tokenize());
     const checker: Checker = new Checker();
@@ -95,5 +98,15 @@ describe('functions example', function describeFunctionsExample(): void {
     checker.checkProgram(program);
 
     expect(generator.generateProgram(program)).toBe(expectedCOutput);
+  });
+
+  test('rejects parameters without explicit mutability', function testMissingParameterMutability(): void {
+    const sourceCode = 'fn sum(a: int, b: int): int { return a + b; }';
+    const lexer: Lexer = new Lexer(sourceCode);
+    const parser: Parser = new Parser(lexer.tokenize());
+
+    expect(function parseMissingParameterMutabilityProgram(): void {
+      parser.parseProgram();
+    }).toThrow();
   });
 });

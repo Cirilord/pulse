@@ -689,11 +689,10 @@ export class Parser {
 
     if (!this.check(TokenType.RightParen)) {
       do {
-        const mutability: 'val' | 'var' = this.match(TokenType.Val, TokenType.Var)
-          ? this.previous().type === TokenType.Var
-            ? 'var'
-            : 'val'
-          : 'val';
+        const mutabilityToken: Token = this.match(TokenType.Val, TokenType.Var)
+          ? this.previous()
+          : this.consume(TokenType.Val, 'Expected "val" or "var" before the parameter name.');
+        const mutability: 'val' | 'var' = mutabilityToken.type === TokenType.Var ? 'var' : 'val';
         const parameterNameToken: Token = this.consume(TokenType.Identifier, 'Expected a parameter name.');
         const parameterName: IdentifierNode = this.createIdentifierNode(parameterNameToken);
 

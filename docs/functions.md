@@ -5,6 +5,7 @@ This document tracks the current function rules in Pulse.
 ## Rules
 
 - Functions use the syntax `fn name(parameters): returnType { ... }`
+- Every parameter must declare `val` or `var`
 - Every parameter must declare its type explicitly
 - Every function must declare its return type explicitly
 - Function parameters cannot use the `void` type
@@ -17,11 +18,11 @@ This document tracks the current function rules in Pulse.
 ## Valid Example
 
 ```pulse
-fn sum(a: int, b: int): int {
+fn sum(val a: int, val b: int): int {
   return a + b;
 }
 
-fn logValue(value: int): void {
+fn logValue(val value: int): void {
   return;
 }
 ```
