@@ -7,11 +7,14 @@ import type {
   BinaryOperator,
   BlockStatementNode,
   BreakStatementNode,
+  CallExpressionNode,
   ConditionalExpressionNode,
   ContinueStatementNode,
   DoWhileStatementNode,
   ExpressionNode,
   ExpressionStatementNode,
+  FunctionDeclarationNode,
+  FunctionParameterNode,
   ForInitializerNode,
   ForStatementNode,
   IdentifierNode,
@@ -20,7 +23,9 @@ import type {
   NamedTypeNode,
   NullableTypeNode,
   ProgramNode,
+  ReturnStatementNode,
   StatementNode,
+  TopLevelNode,
   TypeNode,
   UnaryExpressionNode,
   UnaryOperator,
@@ -49,17 +54,17 @@ export class Parser {
   }
 
   public parseProgram(): ProgramNode {
-    const statements: StatementNode[] = [];
+    const body: TopLevelNode[] = [];
     const startToken: Token = this.peek();
 
     while (!this.isAtEnd()) {
-      statements.push(this.parseStatement());
+      body.push(this.parseTopLevel());
     }
 
     const endToken: Token = this.peek();
 
     return {
-      body: statements,
+      body,
       kind: 'Program',
       location: this.mergeLocations(startToken.location, endToken.location),
     };
@@ -368,6 +373,25 @@ export class Parser {
     };
   }
 
+  private parseCallExpression(callee: ExpressionNode): CallExpressionNode {
+    const argumentsList: ExpressionNode[] = [];
+
+    if (!this.check(TokenType.RightParen)) {
+      do {
+        argumentsList.push(this.parseExpression());
+      } while (this.match(TokenType.Comma));
+    }
+
+    const rightParenToken: Token = this.consume(TokenType.RightParen, 'Expected ")" after the arguments.');
+
+    return {
+      arguments: argumentsList,
+      callee,
+      kind: 'CallExpression',
+      location: this.mergeLocations(callee.location, rightParenToken.location),
+    };
+  }
+
   private parseComparisonExpression(): ExpressionNode {
     let expression: ExpressionNode = this.parseShiftExpression();
 
@@ -543,6 +567,51 @@ export class Parser {
     };
   }
 
+  private parseFunctionDeclaration(keywordToken: Token): FunctionDeclarationNode {
+    const nameToken: Token = this.consume(TokenType.Identifier, 'Expected a function name.');
+    const name: IdentifierNode = this.createIdentifierNode(nameToken);
+
+    this.consume(TokenType.LeftParen, 'Expected "(" after the function name.');
+
+    const parameters: FunctionParameterNode[] = [];
+
+    if (!this.check(TokenType.RightParen)) {
+      do {
+        const parameterNameToken: Token = this.consume(TokenType.Identifier, 'Expected a parameter name.');
+        const parameterName: IdentifierNode = this.createIdentifierNode(parameterNameToken);
+
+        this.consume(TokenType.Colon, 'Expected ":" after the parameter name.');
+
+        const parameterType: TypeNode = this.parseType();
+
+        parameters.push({
+          kind: 'FunctionParameter',
+          location: this.mergeLocations(parameterName.location, parameterType.location),
+          name: parameterName,
+          type: parameterType,
+        });
+      } while (this.match(TokenType.Comma));
+    }
+
+    this.consume(TokenType.RightParen, 'Expected ")" after the parameters.');
+    this.consume(TokenType.Colon, 'Expected ":" after the parameters.');
+
+    const returnType: TypeNode = this.parseType();
+
+    this.consume(TokenType.LeftBrace, 'Expected "{" after the function signature.');
+
+    const body: BlockStatementNode = this.parseBlockStatement();
+
+    return {
+      body,
+      kind: 'FunctionDeclaration',
+      location: this.mergeLocations(keywordToken.location, body.location),
+      name,
+      parameters,
+      returnType,
+    };
+  }
+
   private parseIfStatement(keywordToken: Token): IfStatementNode {
     this.consume(TokenType.LeftParen, 'Expected "(" after "if".');
 
@@ -653,8 +722,13 @@ export class Parser {
   private parsePrimaryExpression(): ExpressionNode {
     if (this.match(TokenType.Identifier)) {
       const token: Token = this.previous();
+      let expression: ExpressionNode = this.createIdentifierExpressionNode(token);
 
-      return this.createIdentifierExpressionNode(token);
+      while (this.match(TokenType.LeftParen)) {
+        expression = this.parseCallExpression(expression);
+      }
+
+      return expression;
     }
 
     if (this.match(TokenType.LeftParen)) {
@@ -721,6 +795,25 @@ export class Parser {
     throw new ParserError('Expected an expression.', this.peek().location);
   }
 
+  private parseReturnStatement(keywordToken: Token): ReturnStatementNode {
+    if (this.match(TokenType.Semicolon)) {
+      return {
+        expression: null,
+        kind: 'ReturnStatement',
+        location: this.mergeLocations(keywordToken.location, this.previous().location),
+      };
+    }
+
+    const expression: ExpressionNode = this.parseExpression();
+    const semicolonToken: Token = this.consume(TokenType.Semicolon, 'Expected ";" after the return value.');
+
+    return {
+      expression,
+      kind: 'ReturnStatement',
+      location: this.mergeLocations(keywordToken.location, semicolonToken.location),
+    };
+  }
+
   private parseShiftExpression(): ExpressionNode {
     let expression: ExpressionNode = this.parseAdditiveExpression();
 
@@ -762,6 +855,10 @@ export class Parser {
       return this.parseIfStatement(this.previous());
     }
 
+    if (this.match(TokenType.Return)) {
+      return this.parseReturnStatement(this.previous());
+    }
+
     if (this.match(TokenType.While)) {
       return this.parseWhileStatement(this.previous());
     }
@@ -775,6 +872,14 @@ export class Parser {
     }
 
     return this.parseExpressionStatement();
+  }
+
+  private parseTopLevel(): TopLevelNode {
+    if (this.match(TokenType.Fn)) {
+      return this.parseFunctionDeclaration(this.previous());
+    }
+
+    return this.parseStatement();
   }
 
   private parseType(): TypeNode {

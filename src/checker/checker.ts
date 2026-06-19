@@ -5,17 +5,22 @@ import type {
   BinaryExpressionNode,
   BlockStatementNode,
   BreakStatementNode,
+  CallExpressionNode,
   ConditionalExpressionNode,
   ContinueStatementNode,
   DoWhileStatementNode,
   ExpressionNode,
   ExpressionStatementNode,
+  FunctionDeclarationNode,
+  FunctionParameterNode,
   ForStatementNode,
   IdentifierExpressionNode,
   IfStatementNode,
   NamedTypeNode,
   ProgramNode,
+  ReturnStatementNode,
   StatementNode,
+  TopLevelNode,
   TypeNode,
   UnaryExpressionNode,
   VariableDeclarationNode,
@@ -38,6 +43,17 @@ type SymbolEntry = {
   type: ResolvedType;
 };
 
+type FunctionEntry = {
+  declaration: FunctionDeclarationNode;
+  parameters: ResolvedParameter[];
+  returnType: ResolvedType;
+};
+
+type ResolvedParameter = {
+  name: string;
+  type: ResolvedType;
+};
+
 export class CheckerError extends Error {
   public readonly location: TokenLocation;
 
@@ -49,22 +65,36 @@ export class CheckerError extends Error {
 }
 
 export class Checker {
+  private currentFunctionReturnType: ResolvedType | null;
+
+  private readonly functions: Map<string, FunctionEntry>;
+
   private loopDepth: number;
 
   private readonly scopes: Map<string, SymbolEntry>[];
 
   public constructor() {
+    this.currentFunctionReturnType = null;
+    this.functions = new Map<string, FunctionEntry>();
     this.loopDepth = 0;
     this.scopes = [];
   }
 
   public checkProgram(program: ProgramNode): void {
+    this.currentFunctionReturnType = null;
+    this.functions.clear();
     this.loopDepth = 0;
     this.scopes.length = 0;
     this.pushScope();
 
-    for (const statement of program.body) {
-      this.checkStatement(statement);
+    for (const topLevel of program.body) {
+      if (topLevel.kind === 'FunctionDeclaration') {
+        this.declareFunction(topLevel);
+      }
+    }
+
+    for (const topLevel of program.body) {
+      this.checkTopLevel(topLevel);
     }
 
     this.popScope();
@@ -283,6 +313,32 @@ export class Checker {
     }
   }
 
+  private checkCallExpression(expression: CallExpressionNode): ResolvedType {
+    if (expression.callee.kind !== 'IdentifierExpression') {
+      throw new CheckerError('Only named functions can be called.', expression.callee.location);
+    }
+
+    const functionEntry: FunctionEntry | undefined = this.functions.get(expression.callee.name);
+
+    if (functionEntry === undefined) {
+      throw new CheckerError(`Unknown function "${expression.callee.name}".`, expression.callee.location);
+    }
+
+    if (expression.arguments.length !== functionEntry.parameters.length) {
+      throw new CheckerError(
+        `Function "${expression.callee.name}" expects ${functionEntry.parameters.length} arguments, got ${expression.arguments.length}.`,
+        expression.location
+      );
+    }
+
+    for (const [index, argument] of expression.arguments.entries()) {
+      const parameter: ResolvedParameter = functionEntry.parameters[index]!;
+      this.assertExpressionAssignable(parameter.type, argument);
+    }
+
+    return functionEntry.returnType;
+  }
+
   private checkConditionalExpression(expression: ConditionalExpressionNode): ResolvedType {
     const conditionType: ResolvedType = this.resolveExpressionType(expression.condition);
 
@@ -394,6 +450,41 @@ export class Checker {
     }
   }
 
+  private checkFunctionDeclaration(statement: FunctionDeclarationNode): void {
+    const functionEntry: FunctionEntry = this.functions.get(statement.name.name)!;
+
+    if (statement.body.body.length === 0 || statement.body.body.at(-1)?.kind !== 'ReturnStatement') {
+      throw new CheckerError(
+        `Function "${statement.name.name}" must end with an explicit return statement.`,
+        statement.body.location
+      );
+    }
+
+    this.pushScope();
+    const previousFunctionReturnType: ResolvedType | null = this.currentFunctionReturnType;
+    this.currentFunctionReturnType = functionEntry.returnType;
+
+    try {
+      for (const parameter of functionEntry.parameters) {
+        if (parameter.type.name === 'void') {
+          throw new CheckerError('Function parameters cannot use the void type.', statement.location);
+        }
+
+        this.peekScope().set(parameter.name, {
+          mutability: 'val',
+          type: parameter.type,
+        });
+      }
+
+      for (const innerStatement of statement.body.body) {
+        this.checkStatement(innerStatement);
+      }
+    } finally {
+      this.currentFunctionReturnType = previousFunctionReturnType;
+      this.popScope();
+    }
+  }
+
   private checkIfStatement(statement: IfStatementNode): void {
     const conditionType: ResolvedType = this.resolveExpressionType(statement.condition);
 
@@ -413,6 +504,26 @@ export class Checker {
     }
 
     this.checkIfStatement(statement.elseBranch);
+  }
+
+  private checkReturnStatement(statement: ReturnStatementNode): void {
+    if (this.currentFunctionReturnType === null) {
+      throw new CheckerError('"return" can only be used inside a function.', statement.location);
+    }
+
+    if (this.currentFunctionReturnType.name === 'void' && !this.currentFunctionReturnType.nullable) {
+      if (statement.expression !== null) {
+        throw new CheckerError('Void functions must use "return;" without a value.', statement.location);
+      }
+
+      return;
+    }
+
+    if (statement.expression === null) {
+      throw new CheckerError('Non-void functions must return a value.', statement.location);
+    }
+
+    this.assertExpressionAssignable(this.currentFunctionReturnType, statement.expression);
   }
 
   private checkStatement(statement: StatementNode): void {
@@ -438,6 +549,9 @@ export class Checker {
       case 'IfStatement':
         this.checkIfStatement(statement);
         return;
+      case 'ReturnStatement':
+        this.checkReturnStatement(statement);
+        return;
       case 'VariableDeclaration':
         this.checkVariableDeclaration(statement);
         return;
@@ -445,6 +559,15 @@ export class Checker {
         this.checkWhileStatement(statement);
         return;
     }
+  }
+
+  private checkTopLevel(topLevel: TopLevelNode): void {
+    if (topLevel.kind === 'FunctionDeclaration') {
+      this.checkFunctionDeclaration(topLevel);
+      return;
+    }
+
+    this.checkStatement(topLevel);
   }
 
   private checkVariableDeclaration(declaration: VariableDeclarationNode): void {
@@ -481,6 +604,41 @@ export class Checker {
     this.loopDepth += 1;
     this.checkBlockStatement(statement.body);
     this.loopDepth -= 1;
+  }
+
+  private declareFunction(statement: FunctionDeclarationNode): void {
+    if (this.functions.has(statement.name.name)) {
+      throw new CheckerError(`Function "${statement.name.name}" is already declared.`, statement.name.location);
+    }
+
+    const parameters: ResolvedParameter[] = statement.parameters.map((parameter: FunctionParameterNode) => {
+      const type: ResolvedType = this.resolveType(parameter.type);
+
+      if (type.name === 'void') {
+        throw new CheckerError('Function parameters cannot use the void type.', parameter.type.location);
+      }
+
+      return {
+        name: parameter.name.name,
+        type,
+      };
+    });
+
+    const parameterNames: Set<string> = new Set<string>();
+
+    for (const parameter of parameters) {
+      if (parameterNames.has(parameter.name)) {
+        throw new CheckerError(`Parameter "${parameter.name}" is already declared.`, statement.location);
+      }
+
+      parameterNames.add(parameter.name);
+    }
+
+    this.functions.set(statement.name.name, {
+      declaration: statement,
+      parameters,
+      returnType: this.resolveType(statement.returnType),
+    });
   }
 
   private isBitwiseAssignmentOperator(operator: AssignmentExpressionNode['operator']): boolean {
@@ -571,6 +729,8 @@ export class Checker {
         return this.checkBinaryExpression(expression);
       case 'BooleanLiteral':
         return { name: 'boolean', nullable: false };
+      case 'CallExpression':
+        return this.checkCallExpression(expression);
       case 'ConditionalExpression':
         return this.checkConditionalExpression(expression);
       case 'DoubleLiteral':

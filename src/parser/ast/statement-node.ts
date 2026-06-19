@@ -5,6 +5,7 @@ import type { DoWhileStatementNode } from './do-while-statement-node.js';
 import type { ExpressionStatementNode } from './expression-statement-node.js';
 import type { ForStatementNode } from './for-statement-node.js';
 import type { IfStatementNode } from './if-statement-node.js';
+import type { ReturnStatementNode } from './return-statement-node.js';
 import type { VariableDeclarationNode } from './variable-declaration-node.js';
 import type { WhileStatementNode } from './while-statement-node.js';
 
@@ -16,5 +17,6 @@ export type StatementNode =
   | ExpressionStatementNode
   | ForStatementNode
   | IfStatementNode
+  | ReturnStatementNode
   | VariableDeclarationNode
   | WhileStatementNode;

@@ -40,6 +40,5 @@ val alias = null;
 ## Notes
 
 - `string?` means `string | null`
-- `return null;` is only valid when the expected return type is nullable
 - Variables with nullable types are currently emitted as internal `<base>_nullable` structs in the C backend, such as `string_t_nullable`
 - The current C backend maps Pulse `string` values to an internal `string_t` runtime struct

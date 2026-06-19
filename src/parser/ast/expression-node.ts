@@ -23,6 +23,12 @@ export type AssignmentExpressionNode = BaseNode & {
   value: ExpressionNode;
 };
 
+export type CallExpressionNode = BaseNode & {
+  arguments: ExpressionNode[];
+  callee: ExpressionNode;
+  kind: 'CallExpression';
+};
+
 export type ConditionalExpressionNode = BaseNode & {
   condition: ExpressionNode;
   elseExpression: ExpressionNode;
@@ -104,6 +110,7 @@ export type ExpressionNode =
   | AssignmentExpressionNode
   | BinaryExpressionNode
   | BooleanLiteralNode
+  | CallExpressionNode
   | ConditionalExpressionNode
   | DoubleLiteralNode
   | GroupingExpressionNode

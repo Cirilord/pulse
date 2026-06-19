@@ -1,7 +1,7 @@
 import type { BaseNode } from './base-node.js';
-import type { StatementNode } from './statement-node.js';
+import type { TopLevelNode } from './top-level-node.js';
 
 export type ProgramNode = BaseNode & {
-  body: StatementNode[];
+  body: TopLevelNode[];
   kind: 'Program';
 };

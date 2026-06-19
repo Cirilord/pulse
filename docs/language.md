@@ -14,6 +14,7 @@ Pulse is a programming language project built in TypeScript.
 - `docs/variables.md` contains the variable and nullability rules
 - `docs/expressions.md` contains the current expression rules
 - `docs/control-flow.md` contains the current condition, loop, and block rules
+- `docs/functions.md` contains the current function and return rules
 
 At the current project stage, this split is enough.
 More files should be added only when a topic grows enough to justify its own focused document.

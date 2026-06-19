@@ -2,6 +2,7 @@ import { type TokenLocation } from '../lexer/token.js';
 import type {
   BlockStatementNode,
   BreakStatementNode,
+  CallExpressionNode,
   ContinueStatementNode,
   DoWhileStatementNode,
   ExpressionNode,
@@ -10,13 +11,21 @@ import type {
   ConditionalExpressionNode,
   ForInitializerNode,
   ForStatementNode,
+  FunctionDeclarationNode,
+  FunctionParameterNode,
   IfStatementNode,
   ProgramNode,
+  ReturnStatementNode,
   StatementNode,
   TypeNode,
+  TopLevelNode,
   VariableDeclarationNode,
   WhileStatementNode,
 } from '../parser/ast/index.js';
+
+type FunctionCodegenEntry = {
+  declaration: FunctionDeclarationNode;
+};
 
 export class CGeneratorError extends Error {
   public readonly location: TokenLocation;
@@ -29,13 +38,18 @@ export class CGeneratorError extends Error {
 }
 
 export class CGenerator {
+  private readonly functions: Map<string, FunctionCodegenEntry>;
+
   private readonly scopes: Map<string, TypeNode>[];
 
   public constructor() {
+    this.functions = new Map<string, FunctionCodegenEntry>();
     this.scopes = [];
   }
 
   public generateProgram(program: ProgramNode): string {
+    this.functions.clear();
+    this.collectFunctions(program);
     this.scopes.length = 0;
 
     const usesStringType: boolean = this.usesStringType(program);
@@ -84,10 +98,25 @@ export class CGenerator {
       lines.push('');
     }
 
+    for (const functionDeclaration of this.getFunctionDeclarations(program)) {
+      lines.push(this.generateFunctionPrototype(functionDeclaration));
+    }
+
+    if (this.getFunctionDeclarations(program).length > 0) {
+      lines.push('');
+    }
+
+    for (const functionDeclaration of this.getFunctionDeclarations(program)) {
+      lines.push(...this.generateFunctionDeclaration(functionDeclaration));
+      lines.push('');
+    }
+
     lines.push('int main(void) {');
 
-    for (const statement of program.body) {
-      lines.push(...this.generateStatement(statement, 1));
+    for (const topLevel of program.body) {
+      if (topLevel.kind !== 'FunctionDeclaration') {
+        lines.push(...this.generateStatement(topLevel, 1));
+      }
     }
 
     lines.push('  return 0;');
@@ -98,10 +127,18 @@ export class CGenerator {
     return `${lines.join('\n')}\n`;
   }
 
+  private collectFunctions(program: ProgramNode): void {
+    for (const topLevel of program.body) {
+      if (topLevel.kind === 'FunctionDeclaration') {
+        this.functions.set(topLevel.name.name, { declaration: topLevel });
+      }
+    }
+  }
+
   private collectNullableTypeNames(program: ProgramNode): string[] {
     const typeNames: Set<string> = new Set<string>();
 
-    this.collectNullableTypeNamesFromStatements(program.body, typeNames);
+    this.collectNullableTypeNamesFromTopLevels(program.body, typeNames);
 
     return [...typeNames].sort();
   }
@@ -114,6 +151,10 @@ export class CGenerator {
       }
 
       if (statement.kind === 'BreakStatement' || statement.kind === 'ContinueStatement') {
+        continue;
+      }
+
+      if (statement.kind === 'ReturnStatement') {
         continue;
       }
 
@@ -159,6 +200,27 @@ export class CGenerator {
     }
   }
 
+  private collectNullableTypeNamesFromTopLevels(topLevels: TopLevelNode[], typeNames: Set<string>): void {
+    for (const topLevel of topLevels) {
+      if (topLevel.kind === 'FunctionDeclaration') {
+        if (topLevel.returnType.kind === 'NullableType') {
+          typeNames.add(topLevel.returnType.type.name);
+        }
+
+        for (const parameter of topLevel.parameters) {
+          if (parameter.type.kind === 'NullableType') {
+            typeNames.add(parameter.type.type.name);
+          }
+        }
+
+        this.collectNullableTypeNamesFromStatements(topLevel.body.body, typeNames);
+        continue;
+      }
+
+      this.collectNullableTypeNamesFromStatements([topLevel], typeNames);
+    }
+  }
+
   private expressionUsesStringEquality(expression: ExpressionNode): boolean {
     switch (expression.kind) {
       case 'AssignmentExpression':
@@ -176,6 +238,10 @@ export class CGenerator {
           this.expressionUsesStringEquality(expression.condition) ||
           this.expressionUsesStringEquality(expression.thenExpression) ||
           this.expressionUsesStringEquality(expression.elseExpression)
+        );
+      case 'CallExpression':
+        return expression.arguments.some((argument: ExpressionNode): boolean =>
+          this.expressionUsesStringEquality(argument)
         );
       case 'GroupingExpression':
         return this.expressionUsesStringEquality(expression.expression);
@@ -219,6 +285,18 @@ export class CGenerator {
 
   private generateBreakStatement(_statement: BreakStatementNode, indentLevel: number): string[] {
     return [`${this.indent(indentLevel)}break;`];
+  }
+
+  private generateCallExpression(expression: CallExpressionNode): string {
+    if (expression.callee.kind !== 'IdentifierExpression') {
+      throw new CGeneratorError('Only named functions can be called.', expression.callee.location);
+    }
+
+    const argumentsList: string = expression.arguments
+      .map((argument: ExpressionNode): string => this.generateExpression(argument))
+      .join(', ');
+
+    return `${expression.callee.name}(${argumentsList})`;
   }
 
   private generateConditionalExpression(expression: ConditionalExpressionNode): string {
@@ -326,6 +404,8 @@ export class CGenerator {
         return `(${this.generateExpression(expression.left)} ${expression.operator} ${this.generateExpression(expression.right)})`;
       case 'BooleanLiteral':
         return expression.value ? 'true' : 'false';
+      case 'CallExpression':
+        return this.generateCallExpression(expression);
       case 'ConditionalExpression':
         return this.generateConditionalExpression(expression);
       case 'DoubleLiteral':
@@ -378,6 +458,38 @@ export class CGenerator {
     lines.push(`${this.indent(indentLevel)}}`);
 
     return lines;
+  }
+
+  private generateFunctionDeclaration(statement: FunctionDeclarationNode): string[] {
+    this.pushScope();
+
+    for (const parameter of statement.parameters) {
+      this.peekScope().set(parameter.name.name, parameter.type);
+    }
+
+    const lines: string[] = [this.generateFunctionPrototype(statement).replace(/;$/, ' {')];
+
+    for (const bodyStatement of statement.body.body) {
+      lines.push(...this.generateStatement(bodyStatement, 1));
+    }
+
+    this.popScope();
+    lines.push('}');
+
+    return lines;
+  }
+
+  private generateFunctionParameter(parameter: FunctionParameterNode): string {
+    return `${this.generateType(parameter.type, 'var')} ${parameter.name.name}`;
+  }
+
+  private generateFunctionPrototype(statement: FunctionDeclarationNode): string {
+    const parameters: string = statement.parameters
+      .map((parameter: FunctionParameterNode): string => this.generateFunctionParameter(parameter))
+      .join(', ');
+    const cParameters: string = parameters.length > 0 ? parameters : 'void';
+
+    return `${this.generateType(statement.returnType, 'var')} ${statement.name.name}(${cParameters});`;
   }
 
   private generateIfStatement(statement: IfStatementNode, indentLevel: number, isElseIf: boolean = false): string[] {
@@ -489,6 +601,14 @@ export class CGenerator {
     return equalityExpression;
   }
 
+  private generateReturnStatement(statement: ReturnStatementNode, indentLevel: number): string[] {
+    if (statement.expression === null) {
+      return [`${this.indent(indentLevel)}return;`];
+    }
+
+    return [`${this.indent(indentLevel)}return ${this.generateExpression(statement.expression)};`];
+  }
+
   private generateScopedBlock(statements: StatementNode[], indentLevel: number, openingLine: string): string[] {
     const lines: string[] = [openingLine];
 
@@ -520,6 +640,8 @@ export class CGenerator {
         return this.generateForStatement(statement, indentLevel);
       case 'IfStatement':
         return this.generateIfStatement(statement, indentLevel);
+      case 'ReturnStatement':
+        return this.generateReturnStatement(statement, indentLevel);
       case 'VariableDeclaration':
         return [`${this.indent(indentLevel)}${this.generateVariableDeclaration(statement)}`];
       case 'WhileStatement':
@@ -581,6 +703,12 @@ export class CGenerator {
     }
   }
 
+  private getFunctionDeclarations(program: ProgramNode): FunctionDeclarationNode[] {
+    return program.body.filter(function isFunctionDeclaration(topLevel): topLevel is FunctionDeclarationNode {
+      return topLevel.kind === 'FunctionDeclaration';
+    });
+  }
+
   private getNonNullableCType(typeName: string): string {
     switch (typeName) {
       case 'boolean':
@@ -597,6 +725,8 @@ export class CGenerator {
         return 'int';
       case 'string':
         return 'string_t';
+      case 'void':
+        return 'void';
       default:
         throw new Error(`Unsupported C type for "${typeName}".`);
     }
@@ -701,6 +831,8 @@ export class CGenerator {
         return this.resolveNonNullableTypeNode(expression.left);
       case 'BooleanLiteral':
         return { kind: 'NamedType', location: expression.location, name: 'boolean' };
+      case 'CallExpression':
+        return this.resolveFunctionType(expression);
       case 'ConditionalExpression':
         return this.resolveConditionalExpressionType(expression);
       case 'DoubleLiteral':
@@ -722,6 +854,20 @@ export class CGenerator {
 
         return this.resolveExpressionType(expression.expression);
     }
+  }
+
+  private resolveFunctionType(expression: CallExpressionNode): TypeNode {
+    if (expression.callee.kind !== 'IdentifierExpression') {
+      throw new CGeneratorError('Only named functions can be called.', expression.callee.location);
+    }
+
+    const functionEntry: FunctionCodegenEntry | undefined = this.functions.get(expression.callee.name);
+
+    if (functionEntry === undefined) {
+      throw new CGeneratorError(`Unknown function "${expression.callee.name}".`, expression.callee.location);
+    }
+
+    return functionEntry.declaration.returnType;
   }
 
   private resolveNonNullableTypeNode(expression: ExpressionNode): TypeNode {
@@ -767,7 +913,7 @@ export class CGenerator {
   private usesStringEquality(program: ProgramNode): boolean {
     this.scopes.length = 0;
     this.pushScope();
-    const usesStringEquality: boolean = this.usesStringEqualityInStatements(program.body);
+    const usesStringEquality: boolean = this.usesStringEqualityInTopLevels(program.body);
     this.popScope();
 
     return usesStringEquality;
@@ -864,6 +1010,10 @@ export class CGenerator {
         return false;
       }
 
+      if (statement.kind === 'ReturnStatement') {
+        return statement.expression !== null && this.expressionUsesStringEquality(statement.expression);
+      }
+
       if (statement.kind === 'WhileStatement') {
         if (this.expressionUsesStringEquality(statement.condition)) {
           return true;
@@ -891,8 +1041,27 @@ export class CGenerator {
     });
   }
 
+  private usesStringEqualityInTopLevels(topLevels: TopLevelNode[]): boolean {
+    return topLevels.some((topLevel: TopLevelNode): boolean => {
+      if (topLevel.kind === 'FunctionDeclaration') {
+        this.pushScope();
+
+        for (const parameter of topLevel.parameters) {
+          this.peekScope().set(parameter.name.name, parameter.type);
+        }
+
+        const bodyUsesStringEquality: boolean = this.usesStringEqualityInStatements(topLevel.body.body);
+        this.popScope();
+
+        return bodyUsesStringEquality;
+      }
+
+      return this.usesStringEqualityInStatements([topLevel]);
+    });
+  }
+
   private usesStringType(program: ProgramNode): boolean {
-    return this.usesStringTypeInStatements(program.body);
+    return this.usesStringTypeInTopLevels(program.body);
   }
 
   private usesStringTypeInStatements(statements: StatementNode[]): boolean {
@@ -932,11 +1101,35 @@ export class CGenerator {
         return false;
       }
 
+      if (statement.kind === 'ReturnStatement') {
+        return false;
+      }
+
       return (
         statement.kind === 'VariableDeclaration' &&
         ((statement.type.kind === 'NamedType' && statement.type.name === 'string') ||
           (statement.type.kind === 'NullableType' && statement.type.type.name === 'string'))
       );
+    });
+  }
+
+  private usesStringTypeInTopLevels(topLevels: TopLevelNode[]): boolean {
+    return topLevels.some((topLevel: TopLevelNode): boolean => {
+      if (topLevel.kind === 'FunctionDeclaration') {
+        return (
+          (topLevel.returnType.kind === 'NamedType' && topLevel.returnType.name === 'string') ||
+          (topLevel.returnType.kind === 'NullableType' && topLevel.returnType.type.name === 'string') ||
+          topLevel.parameters.some((parameter: FunctionParameterNode): boolean => {
+            return (
+              (parameter.type.kind === 'NamedType' && parameter.type.name === 'string') ||
+              (parameter.type.kind === 'NullableType' && parameter.type.type.name === 'string')
+            );
+          }) ||
+          this.usesStringTypeInStatements(topLevel.body.body)
+        );
+      }
+
+      return this.usesStringTypeInStatements([topLevel]);
     });
   }
 }
