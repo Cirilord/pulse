@@ -26,6 +26,8 @@ typedef struct {
   string_t value;
 } string_t_nullable;
 
+int main(void);
+
 int main(void) {
   const bool equalCheck = (3 == 3);
   const bool notEqualCheck = (3 != 4);
@@ -53,3 +55,4 @@ int main(void) {
   const string_t fallbackAlias = (alias.is_null ? STRING_LITERAL("guest") : alias.value);
   return 0;
 }
+

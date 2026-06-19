@@ -1,6 +1,8 @@
 #include <stdbool.h>
 #include <stddef.h>
 
+int main(void);
+
 int main(void) {
   const int a = 30;
   const int b = (a + 5);
@@ -13,3 +15,4 @@ int main(void) {
   x /= 2;
   return 0;
 }
+

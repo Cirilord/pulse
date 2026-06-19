@@ -12,6 +12,7 @@ This document tracks the current function rules in Pulse.
 - `void` functions must use `return;`
 - Non-void functions must return a value compatible with the declared return type
 - `return null;` is only valid when the declared return type is nullable
+- Top-level executable statements are not allowed outside functions
 
 ## Valid Example
 

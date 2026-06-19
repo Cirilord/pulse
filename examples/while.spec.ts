@@ -1,5 +1,6 @@
 import { readFile } from 'node:fs/promises';
 
+import { getMainStatements, wrapInMain } from './test-helpers.js';
 import { Checker, CheckerError } from '../src/checker/checker.js';
 import { CGenerator } from '../src/codegen/c-generator.js';
 import { Lexer } from '../src/lexer/lexer.js';
@@ -20,13 +21,12 @@ describe('while example', function describeWhileExample(): void {
     expect(tokens).toContainEqual({ lexeme: 'while', type: TokenType.While });
   });
 
-  test('parses examples/while.p with a while statement', async function testParserOutput(): Promise<void> {
+  test('parses examples/while.p with a while statement inside main', async function testParserOutput(): Promise<void> {
     const sourceCode: string = await readFile(new URL('./while.p', import.meta.url), 'utf8');
     const lexer: Lexer = new Lexer(sourceCode);
     const parser: Parser = new Parser(lexer.tokenize());
-    const program = parser.parseProgram();
 
-    expect(program.body[1]).toMatchObject({
+    expect(getMainStatements(parser.parseProgram())[1]).toMatchObject({
       body: {
         body: [{ kind: 'ExpressionStatement' }],
         kind: 'BlockStatement',
@@ -51,7 +51,7 @@ describe('while example', function describeWhileExample(): void {
   });
 
   test('rejects while statements with non-boolean conditions', function testInvalidWhileCondition(): void {
-    const sourceCode = 'while (1) { val a: int = 1; }';
+    const sourceCode = wrapInMain('  while (1) { val a: int = 1; }');
     const lexer: Lexer = new Lexer(sourceCode);
     const parser: Parser = new Parser(lexer.tokenize());
     const checker: Checker = new Checker();

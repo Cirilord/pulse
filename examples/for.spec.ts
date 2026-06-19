@@ -1,5 +1,6 @@
 import { readFile } from 'node:fs/promises';
 
+import { getMainStatements, wrapInMain } from './test-helpers.js';
 import { Checker, CheckerError } from '../src/checker/checker.js';
 import { CGenerator } from '../src/codegen/c-generator.js';
 import { Lexer } from '../src/lexer/lexer.js';
@@ -20,13 +21,12 @@ describe('for example', function describeForExample(): void {
     expect(tokens).toContainEqual({ lexeme: 'for', type: TokenType.For });
   });
 
-  test('parses examples/for.p with a for statement', async function testParserOutput(): Promise<void> {
+  test('parses examples/for.p with a for statement inside main', async function testParserOutput(): Promise<void> {
     const sourceCode: string = await readFile(new URL('./for.p', import.meta.url), 'utf8');
     const lexer: Lexer = new Lexer(sourceCode);
     const parser: Parser = new Parser(lexer.tokenize());
-    const program = parser.parseProgram();
 
-    expect(program.body[0]).toMatchObject({
+    expect(getMainStatements(parser.parseProgram())[0]).toMatchObject({
       body: {
         body: [{ kind: 'VariableDeclaration' }],
         kind: 'BlockStatement',
@@ -59,7 +59,7 @@ describe('for example', function describeForExample(): void {
   });
 
   test('rejects for statements with non-boolean conditions', function testInvalidForCondition(): void {
-    const sourceCode = 'for (var index: int = 0; 1; index += 1) { var copy: int = index; }';
+    const sourceCode = wrapInMain('  for (var index: int = 0; 1; index += 1) { var copy: int = index; }');
     const lexer: Lexer = new Lexer(sourceCode);
     const parser: Parser = new Parser(lexer.tokenize());
     const checker: Checker = new Checker();

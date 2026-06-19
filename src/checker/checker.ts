@@ -567,7 +567,7 @@ export class Checker {
       return;
     }
 
-    this.checkStatement(topLevel);
+    throw new CheckerError('Top-level statements are not allowed.', topLevel.location);
   }
 
   private checkVariableDeclaration(declaration: VariableDeclarationNode): void {

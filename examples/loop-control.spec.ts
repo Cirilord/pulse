@@ -1,5 +1,6 @@
 import { readFile } from 'node:fs/promises';
 
+import { getMainStatements, wrapInMain } from './test-helpers.js';
 import { Checker, CheckerError } from '../src/checker/checker.js';
 import { CGenerator } from '../src/codegen/c-generator.js';
 import { Lexer } from '../src/lexer/lexer.js';
@@ -21,13 +22,13 @@ describe('loop-control example', function describeLoopControlExample(): void {
     expect(tokens).toContainEqual({ lexeme: 'continue', type: TokenType.Continue });
   });
 
-  test('parses examples/loop-control.p with break and continue statements', async function testParserOutput(): Promise<void> {
+  test('parses examples/loop-control.p with break and continue statements inside main', async function testParserOutput(): Promise<void> {
     const sourceCode: string = await readFile(new URL('./loop-control.p', import.meta.url), 'utf8');
     const lexer: Lexer = new Lexer(sourceCode);
     const parser: Parser = new Parser(lexer.tokenize());
-    const program = parser.parseProgram();
+    const statements = getMainStatements(parser.parseProgram());
 
-    expect(program.body[1]).toMatchObject({
+    expect(statements[1]).toMatchObject({
       body: {
         body: [
           { kind: 'ExpressionStatement' },
@@ -48,7 +49,7 @@ describe('loop-control example', function describeLoopControlExample(): void {
       kind: 'WhileStatement',
     });
 
-    expect(program.body[3]).toMatchObject({
+    expect(statements[3]).toMatchObject({
       body: {
         body: [
           { kind: 'ExpressionStatement' },
@@ -76,7 +77,7 @@ describe('loop-control example', function describeLoopControlExample(): void {
   });
 
   test('rejects break statements outside loops', function testInvalidBreakStatement(): void {
-    const sourceCode = 'break;';
+    const sourceCode = wrapInMain('  break;');
     const lexer: Lexer = new Lexer(sourceCode);
     const parser: Parser = new Parser(lexer.tokenize());
     const checker: Checker = new Checker();
@@ -87,7 +88,7 @@ describe('loop-control example', function describeLoopControlExample(): void {
   });
 
   test('rejects continue statements outside loops', function testInvalidContinueStatement(): void {
-    const sourceCode = 'continue;';
+    const sourceCode = wrapInMain('  continue;');
     const lexer: Lexer = new Lexer(sourceCode);
     const parser: Parser = new Parser(lexer.tokenize());
     const checker: Checker = new Checker();

@@ -1,6 +1,8 @@
 #include <stdbool.h>
 #include <stddef.h>
 
+int main(void);
+
 int main(void) {
   int counter = 0;
   do {
@@ -8,3 +10,4 @@ int main(void) {
   } while ((counter < 2));
   return 0;
 }
+

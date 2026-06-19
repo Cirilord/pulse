@@ -23,6 +23,8 @@ typedef struct {
   string_t value;
 } string_t_nullable;
 
+int main(void);
+
 int main(void) {
   int a = 30;
   const string_t b = STRING_LITERAL("Test");
@@ -36,3 +38,4 @@ int main(void) {
   const float_nullable ratio = (float_nullable){ .is_null = true, .value = 0.0f };
   return 0;
 }
+

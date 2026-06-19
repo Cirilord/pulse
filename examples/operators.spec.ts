@@ -1,5 +1,6 @@
 import { readFile } from 'node:fs/promises';
 
+import { getMainStatements, wrapInMain } from './test-helpers.js';
 import { Checker, CheckerError } from '../src/checker/checker.js';
 import { CGenerator } from '../src/codegen/c-generator.js';
 import { Lexer } from '../src/lexer/lexer.js';
@@ -34,34 +35,34 @@ describe('operators example', function describeOperatorsExample(): void {
     expect(tokens).toContainEqual({ lexeme: ':', type: TokenType.Colon });
   });
 
-  test('parses comparison, logical, unary, and nullable equality expressions', async function testParserOutput(): Promise<void> {
+  test('parses comparison, logical, unary, and nullable equality expressions inside main', async function testParserOutput(): Promise<void> {
     const sourceCode: string = await readFile(new URL('./operators.p', import.meta.url), 'utf8');
     const lexer: Lexer = new Lexer(sourceCode);
     const parser: Parser = new Parser(lexer.tokenize());
-    const program = parser.parseProgram();
+    const statements = getMainStatements(parser.parseProgram());
 
-    expect(program.body[0]).toMatchObject({
+    expect(statements[0]).toMatchObject({
       initializer: {
         kind: 'BinaryExpression',
         operator: '==',
       },
     });
 
-    expect(program.body[6]).toMatchObject({
+    expect(statements[6]).toMatchObject({
       initializer: {
         kind: 'BinaryExpression',
         operator: '&&',
       },
     });
 
-    expect(program.body[8]).toMatchObject({
+    expect(statements[8]).toMatchObject({
       initializer: {
         kind: 'UnaryExpression',
         operator: '!',
       },
     });
 
-    expect(program.body[12]).toMatchObject({
+    expect(statements[12]).toMatchObject({
       expression: {
         kind: 'AssignmentExpression',
         operator: '||=',
@@ -69,7 +70,7 @@ describe('operators example', function describeOperatorsExample(): void {
       kind: 'ExpressionStatement',
     });
 
-    expect(program.body[13]).toMatchObject({
+    expect(statements[13]).toMatchObject({
       expression: {
         kind: 'AssignmentExpression',
         operator: '&&=',
@@ -77,27 +78,27 @@ describe('operators example', function describeOperatorsExample(): void {
       kind: 'ExpressionStatement',
     });
 
-    expect(program.body[14]).toMatchObject({
+    expect(statements[14]).toMatchObject({
       initializer: {
         kind: 'ConditionalExpression',
       },
     });
 
-    expect(program.body[16]).toMatchObject({
+    expect(statements[16]).toMatchObject({
       initializer: {
         kind: 'BinaryExpression',
         operator: '==',
       },
     });
 
-    expect(program.body[19]).toMatchObject({
+    expect(statements[19]).toMatchObject({
       initializer: {
         kind: 'BinaryExpression',
         operator: '==',
       },
     });
 
-    expect(program.body[22]).toMatchObject({
+    expect(statements[22]).toMatchObject({
       expression: {
         kind: 'AssignmentExpression',
         operator: '??=',
@@ -105,7 +106,7 @@ describe('operators example', function describeOperatorsExample(): void {
       kind: 'ExpressionStatement',
     });
 
-    expect(program.body[23]).toMatchObject({
+    expect(statements[23]).toMatchObject({
       initializer: {
         kind: 'BinaryExpression',
         operator: '??',
@@ -125,7 +126,7 @@ describe('operators example', function describeOperatorsExample(): void {
   });
 
   test('rejects logical operators on numeric values', function testInvalidLogicalOperands(): void {
-    const sourceCode = 'val invalid: boolean = 1 && 2;';
+    const sourceCode = wrapInMain('  val invalid: boolean = 1 && 2;');
     const lexer: Lexer = new Lexer(sourceCode);
     const parser: Parser = new Parser(lexer.tokenize());
     const checker: Checker = new Checker();
@@ -136,7 +137,7 @@ describe('operators example', function describeOperatorsExample(): void {
   });
 
   test('rejects comparison across mismatched numeric types', function testInvalidComparisonOperands(): void {
-    const sourceCode = 'val invalid: boolean = 1 < 2.5;';
+    const sourceCode = wrapInMain('  val invalid: boolean = 1 < 2.5;');
     const lexer: Lexer = new Lexer(sourceCode);
     const parser: Parser = new Parser(lexer.tokenize());
     const checker: Checker = new Checker();
@@ -147,7 +148,9 @@ describe('operators example', function describeOperatorsExample(): void {
   });
 
   test('rejects ordered comparisons with nullable operands', function testInvalidNullableOrderedComparison(): void {
-    const sourceCode = 'var left: int? = null; var right: int? = null; val invalid: boolean = left < right;';
+    const sourceCode = wrapInMain(
+      '  var left: int? = null;\n  var right: int? = null;\n  val invalid: boolean = left < right;'
+    );
     const lexer: Lexer = new Lexer(sourceCode);
     const parser: Parser = new Parser(lexer.tokenize());
     const checker: Checker = new Checker();
@@ -158,7 +161,7 @@ describe('operators example', function describeOperatorsExample(): void {
   });
 
   test('rejects equality between nullable and non-nullable operands', function testInvalidNullableEqualityOperands(): void {
-    const sourceCode = 'var left: int? = null; val invalid: boolean = left == 1;';
+    const sourceCode = wrapInMain('  var left: int? = null;\n  val invalid: boolean = left == 1;');
     const lexer: Lexer = new Lexer(sourceCode);
     const parser: Parser = new Parser(lexer.tokenize());
     const checker: Checker = new Checker();
@@ -169,7 +172,7 @@ describe('operators example', function describeOperatorsExample(): void {
   });
 
   test('rejects null coalescing on a non-nullable left operand', function testInvalidNullCoalescingLeftOperand(): void {
-    const sourceCode = 'val name: string = "Pulse"; val fallback: string = name ?? "guest";';
+    const sourceCode = wrapInMain('  val name: string = "Pulse";\n  val fallback: string = name ?? "guest";');
     const lexer: Lexer = new Lexer(sourceCode);
     const parser: Parser = new Parser(lexer.tokenize());
     const checker: Checker = new Checker();
@@ -180,7 +183,7 @@ describe('operators example', function describeOperatorsExample(): void {
   });
 
   test('rejects null coalescing across mismatched types', function testInvalidNullCoalescingTypes(): void {
-    const sourceCode = 'val alias: string? = null; val fallback: string = alias ?? 1;';
+    const sourceCode = wrapInMain('  val alias: string? = null;\n  val fallback: string = alias ?? 1;');
     const lexer: Lexer = new Lexer(sourceCode);
     const parser: Parser = new Parser(lexer.tokenize());
     const checker: Checker = new Checker();
@@ -191,7 +194,7 @@ describe('operators example', function describeOperatorsExample(): void {
   });
 
   test('rejects logical compound assignment on non-boolean variables', function testInvalidLogicalCompoundAssignment(): void {
-    const sourceCode = 'var count: int = 1; count ||= 2;';
+    const sourceCode = wrapInMain('  var count: int = 1;\n  count ||= 2;');
     const lexer: Lexer = new Lexer(sourceCode);
     const parser: Parser = new Parser(lexer.tokenize());
     const checker: Checker = new Checker();
@@ -202,7 +205,7 @@ describe('operators example', function describeOperatorsExample(): void {
   });
 
   test('rejects null coalescing assignment on non-nullable variables', function testInvalidNullCoalescingAssignment(): void {
-    const sourceCode = 'var name: string = "Pulse"; name ??= "guest";';
+    const sourceCode = wrapInMain('  var name: string = "Pulse";\n  name ??= "guest";');
     const lexer: Lexer = new Lexer(sourceCode);
     const parser: Parser = new Parser(lexer.tokenize());
     const checker: Checker = new Checker();
@@ -213,7 +216,7 @@ describe('operators example', function describeOperatorsExample(): void {
   });
 
   test('rejects conditional expressions with non-boolean conditions', function testInvalidConditionalCondition(): void {
-    const sourceCode = 'val invalid: int = 1 ? 2 : 3;';
+    const sourceCode = wrapInMain('  val invalid: int = 1 ? 2 : 3;');
     const lexer: Lexer = new Lexer(sourceCode);
     const parser: Parser = new Parser(lexer.tokenize());
     const checker: Checker = new Checker();
@@ -224,7 +227,7 @@ describe('operators example', function describeOperatorsExample(): void {
   });
 
   test('rejects conditional expressions with nullable boolean conditions', function testInvalidNullableConditionalCondition(): void {
-    const sourceCode = 'var flag: boolean? = null; val invalid: boolean = flag ? true : false;';
+    const sourceCode = wrapInMain('  var flag: boolean? = null;\n  val invalid: boolean = flag ? true : false;');
     const lexer: Lexer = new Lexer(sourceCode);
     const parser: Parser = new Parser(lexer.tokenize());
     const checker: Checker = new Checker();
@@ -235,7 +238,7 @@ describe('operators example', function describeOperatorsExample(): void {
   });
 
   test('rejects conditional expressions with mismatched branch types', function testInvalidConditionalBranches(): void {
-    const sourceCode = 'val invalid: int = true ? 1 : "Pulse";';
+    const sourceCode = wrapInMain('  val invalid: int = true ? 1 : "Pulse";');
     const lexer: Lexer = new Lexer(sourceCode);
     const parser: Parser = new Parser(lexer.tokenize());
     const checker: Checker = new Checker();
@@ -247,10 +250,10 @@ describe('operators example', function describeOperatorsExample(): void {
 
   test('rejects unary not on numeric and nullable operands', function testInvalidUnaryNotOperands(): void {
     const sourcePrograms: string[] = [
-      'val invalid: boolean = !0;',
-      'val invalid: boolean = !"";',
-      'val flag: boolean? = null; val invalid: boolean = !flag;',
-      'val invalid: boolean = !null;',
+      wrapInMain('  val invalid: boolean = !0;'),
+      wrapInMain('  val invalid: boolean = !"";'),
+      wrapInMain('  val flag: boolean? = null;\n  val invalid: boolean = !flag;'),
+      wrapInMain('  val invalid: boolean = !null;'),
     ];
 
     for (const sourceCode of sourcePrograms) {

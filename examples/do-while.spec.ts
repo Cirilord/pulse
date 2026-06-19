@@ -1,5 +1,6 @@
 import { readFile } from 'node:fs/promises';
 
+import { getMainStatements, wrapInMain } from './test-helpers.js';
 import { Checker, CheckerError } from '../src/checker/checker.js';
 import { CGenerator } from '../src/codegen/c-generator.js';
 import { Lexer } from '../src/lexer/lexer.js';
@@ -21,13 +22,12 @@ describe('do-while example', function describeDoWhileExample(): void {
     expect(tokens).toContainEqual({ lexeme: 'while', type: TokenType.While });
   });
 
-  test('parses examples/do-while.p with a do-while statement', async function testParserOutput(): Promise<void> {
+  test('parses examples/do-while.p with a do-while statement inside main', async function testParserOutput(): Promise<void> {
     const sourceCode: string = await readFile(new URL('./do-while.p', import.meta.url), 'utf8');
     const lexer: Lexer = new Lexer(sourceCode);
     const parser: Parser = new Parser(lexer.tokenize());
-    const program = parser.parseProgram();
 
-    expect(program.body[1]).toMatchObject({
+    expect(getMainStatements(parser.parseProgram())[1]).toMatchObject({
       body: {
         body: [{ kind: 'ExpressionStatement' }],
         kind: 'BlockStatement',
@@ -52,7 +52,7 @@ describe('do-while example', function describeDoWhileExample(): void {
   });
 
   test('rejects do-while statements with non-boolean conditions', function testInvalidDoWhileCondition(): void {
-    const sourceCode = 'do { val a: int = 1; } while (1);';
+    const sourceCode = wrapInMain('  do { val a: int = 1; } while (1);');
     const lexer: Lexer = new Lexer(sourceCode);
     const parser: Parser = new Parser(lexer.tokenize());
     const checker: Checker = new Checker();

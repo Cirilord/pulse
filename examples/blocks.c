@@ -1,6 +1,8 @@
 #include <stdbool.h>
 #include <stddef.h>
 
+int main(void);
+
 int main(void) {
   const int a = 1;
   {
@@ -11,3 +13,4 @@ int main(void) {
   int c = (a + 3);
   return 0;
 }
+

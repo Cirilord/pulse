@@ -1,5 +1,6 @@
 import { readFile } from 'node:fs/promises';
 
+import { getMainStatements } from './test-helpers.js';
 import { Checker } from '../src/checker/checker.js';
 import { CGenerator } from '../src/codegen/c-generator.js';
 import { Lexer } from '../src/lexer/lexer.js';
@@ -21,13 +22,13 @@ describe('grouping example', function describeGroupingExample(): void {
     expect(tokens).toContainEqual({ lexeme: ')', type: TokenType.RightParen });
   });
 
-  test('parses grouping expressions explicitly', async function testParserOutput(): Promise<void> {
+  test('parses grouping expressions explicitly inside main', async function testParserOutput(): Promise<void> {
     const sourceCode: string = await readFile(new URL('./grouping.p', import.meta.url), 'utf8');
     const lexer: Lexer = new Lexer(sourceCode);
     const parser: Parser = new Parser(lexer.tokenize());
-    const program = parser.parseProgram();
+    const statements = getMainStatements(parser.parseProgram());
 
-    expect(program.body[0]).toMatchObject({
+    expect(statements[0]).toMatchObject({
       initializer: {
         kind: 'BinaryExpression',
         left: {
@@ -37,7 +38,7 @@ describe('grouping example', function describeGroupingExample(): void {
       },
     });
 
-    expect(program.body[1]).toMatchObject({
+    expect(statements[1]).toMatchObject({
       initializer: {
         kind: 'UnaryExpression',
         operator: '!',

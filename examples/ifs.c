@@ -8,6 +8,8 @@ typedef struct {
 
 #define STRING_LITERAL(value) ((string_t){ sizeof(value) - 1, value })
 
+int main(void);
+
 int main(void) {
   int statusCode = 1;
   if ((statusCode == 0)) {
@@ -21,3 +23,4 @@ int main(void) {
   }
   return 0;
 }
+

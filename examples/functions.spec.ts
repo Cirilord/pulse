@@ -1,5 +1,6 @@
 import { readFile } from 'node:fs/promises';
 
+import { getMainFunction, getMainStatements, wrapInMain } from './test-helpers.js';
 import { Checker, CheckerError } from '../src/checker/checker.js';
 import { CGenerator } from '../src/codegen/c-generator.js';
 import { Lexer } from '../src/lexer/lexer.js';
@@ -34,7 +35,13 @@ describe('functions example', function describeFunctionsExample(): void {
       returnType: { kind: 'NamedType', name: 'int' },
     });
 
-    expect(program.body[2]).toMatchObject({
+    expect(getMainFunction(program)).toMatchObject({
+      kind: 'FunctionDeclaration',
+      name: { name: 'main' },
+      returnType: { kind: 'NamedType', name: 'int' },
+    });
+
+    expect(getMainStatements(program)[0]).toMatchObject({
       initializer: {
         kind: 'CallExpression',
       },
@@ -55,7 +62,7 @@ describe('functions example', function describeFunctionsExample(): void {
   });
 
   test('rejects functions without an explicit final return', function testMissingReturn(): void {
-    const sourceCode = 'fn sum(a: int, b: int): int { val result: int = a + b; }';
+    const sourceCode = `${wrapInMain('  return 0;')}\n\nfn sum(a: int, b: int): int { val result: int = a + b; }`;
     const lexer: Lexer = new Lexer(sourceCode);
     const parser: Parser = new Parser(lexer.tokenize());
     const checker: Checker = new Checker();
@@ -66,7 +73,7 @@ describe('functions example', function describeFunctionsExample(): void {
   });
 
   test('rejects void functions that return a value', function testVoidReturnValue(): void {
-    const sourceCode = 'fn logValue(value: int): void { return value; }';
+    const sourceCode = `${wrapInMain('  return 0;')}\n\nfn logValue(value: int): void { return value; }`;
     const lexer: Lexer = new Lexer(sourceCode);
     const parser: Parser = new Parser(lexer.tokenize());
     const checker: Checker = new Checker();

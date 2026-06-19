@@ -1,5 +1,6 @@
 import { readFile } from 'node:fs/promises';
 
+import { getMainStatements, wrapInMain } from './test-helpers.js';
 import { Checker, CheckerError } from '../src/checker/checker.js';
 import { CGenerator } from '../src/codegen/c-generator.js';
 import { Lexer } from '../src/lexer/lexer.js';
@@ -22,13 +23,12 @@ describe('ifs example', function describeIfsExample(): void {
     expect(tokens).toContainEqual({ lexeme: 'else', type: TokenType.Else });
   });
 
-  test('parses examples/ifs.p with an if statement chain', async function testParserOutput(): Promise<void> {
+  test('parses examples/ifs.p with an if statement chain inside main', async function testParserOutput(): Promise<void> {
     const sourceCode: string = await readFile(new URL('./ifs.p', import.meta.url), 'utf8');
     const lexer: Lexer = new Lexer(sourceCode);
     const parser: Parser = new Parser(lexer.tokenize());
-    const program = parser.parseProgram();
 
-    expect(program.body[1]).toMatchObject({
+    expect(getMainStatements(parser.parseProgram())[1]).toMatchObject({
       condition: {
         kind: 'BinaryExpression',
         operator: '==',
@@ -64,7 +64,7 @@ describe('ifs example', function describeIfsExample(): void {
   });
 
   test('rejects if statements with non-boolean conditions', function testInvalidIfCondition(): void {
-    const sourceCode = 'if (1) { val a: int = 1; }';
+    const sourceCode = wrapInMain('  if (1) { val a: int = 1; }');
     const lexer: Lexer = new Lexer(sourceCode);
     const parser: Parser = new Parser(lexer.tokenize());
     const checker: Checker = new Checker();

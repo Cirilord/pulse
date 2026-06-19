@@ -3,6 +3,7 @@
 
 int sum(int a, int b);
 void logValue(int value);
+int main(void);
 
 int sum(int a, int b) {
   return (a + b);
@@ -17,3 +18,4 @@ int main(void) {
   logValue(result);
   return 0;
 }
+

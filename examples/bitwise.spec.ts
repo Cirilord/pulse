@@ -1,5 +1,6 @@
 import { readFile } from 'node:fs/promises';
 
+import { getMainStatements, wrapInMain } from './test-helpers.js';
 import { Checker, CheckerError } from '../src/checker/checker.js';
 import { CGenerator } from '../src/codegen/c-generator.js';
 import { Lexer } from '../src/lexer/lexer.js';
@@ -30,27 +31,27 @@ describe('bitwise example', function describeBitwiseExample(): void {
     expect(tokens).toContainEqual({ lexeme: '>>=', type: TokenType.RightShiftEqual });
   });
 
-  test('parses bitwise expressions and assignments', async function testParserOutput(): Promise<void> {
+  test('parses bitwise expressions and assignments inside main', async function testParserOutput(): Promise<void> {
     const sourceCode: string = await readFile(new URL('./bitwise.p', import.meta.url), 'utf8');
     const lexer: Lexer = new Lexer(sourceCode);
     const parser: Parser = new Parser(lexer.tokenize());
-    const program = parser.parseProgram();
+    const statements = getMainStatements(parser.parseProgram());
 
-    expect(program.body[0]).toMatchObject({
+    expect(statements[0]).toMatchObject({
       initializer: {
         kind: 'BinaryExpression',
         operator: '&',
       },
     });
 
-    expect(program.body[5]).toMatchObject({
+    expect(statements[5]).toMatchObject({
       initializer: {
         kind: 'UnaryExpression',
         operator: '~',
       },
     });
 
-    expect(program.body[7]).toMatchObject({
+    expect(statements[7]).toMatchObject({
       expression: {
         kind: 'AssignmentExpression',
         operator: '&=',
@@ -70,7 +71,7 @@ describe('bitwise example', function describeBitwiseExample(): void {
   });
 
   test('rejects bitwise operators on non-integer values', function testInvalidBitwiseOperands(): void {
-    const sourceCode = 'val invalid: boolean = true & false;';
+    const sourceCode = wrapInMain('  val invalid: boolean = true & false;');
     const lexer: Lexer = new Lexer(sourceCode);
     const parser: Parser = new Parser(lexer.tokenize());
     const checker: Checker = new Checker();
@@ -81,7 +82,7 @@ describe('bitwise example', function describeBitwiseExample(): void {
   });
 
   test('rejects unary bitwise not on floating-point values', function testInvalidBitwiseUnaryOperand(): void {
-    const sourceCode = 'val invalid: double = ~1.5;';
+    const sourceCode = wrapInMain('  val invalid: double = ~1.5;');
     const lexer: Lexer = new Lexer(sourceCode);
     const parser: Parser = new Parser(lexer.tokenize());
     const checker: Checker = new Checker();

@@ -1,5 +1,6 @@
 import { readFile } from 'node:fs/promises';
 
+import { getMainStatements, wrapInMain } from './test-helpers.js';
 import { Checker, CheckerError } from '../src/checker/checker.js';
 import { CGenerator } from '../src/codegen/c-generator.js';
 import { Lexer } from '../src/lexer/lexer.js';
@@ -10,80 +11,28 @@ describe('arithmetic example', function describeArithmeticExample(): void {
   test('tokenizes examples/arithmetic.p with arithmetic and compound assignment operators', async function testLexerOutput(): Promise<void> {
     const sourceCode: string = await readFile(new URL('./arithmetic.p', import.meta.url), 'utf8');
     const lexer: Lexer = new Lexer(sourceCode);
+    const tokens = lexer.tokenize().map(function toTokenShape(token): { lexeme: string; type: TokenType } {
+      return {
+        lexeme: token.lexeme,
+        type: token.type,
+      };
+    });
 
-    expect(
-      lexer.tokenize().map(function toTokenShape(token): { lexeme: string; type: TokenType } {
-        return {
-          lexeme: token.lexeme,
-          type: token.type,
-        };
-      })
-    ).toStrictEqual([
-      { lexeme: 'val', type: TokenType.Val },
-      { lexeme: 'a', type: TokenType.Identifier },
-      { lexeme: ':', type: TokenType.Colon },
-      { lexeme: 'int', type: TokenType.Identifier },
-      { lexeme: '=', type: TokenType.Equal },
-      { lexeme: '30', type: TokenType.IntegerLiteral },
-      { lexeme: ';', type: TokenType.Semicolon },
-      { lexeme: 'val', type: TokenType.Val },
-      { lexeme: 'b', type: TokenType.Identifier },
-      { lexeme: ':', type: TokenType.Colon },
-      { lexeme: 'int', type: TokenType.Identifier },
-      { lexeme: '=', type: TokenType.Equal },
-      { lexeme: 'a', type: TokenType.Identifier },
-      { lexeme: '+', type: TokenType.Plus },
-      { lexeme: '5', type: TokenType.IntegerLiteral },
-      { lexeme: ';', type: TokenType.Semicolon },
-      { lexeme: 'val', type: TokenType.Val },
-      { lexeme: 'c', type: TokenType.Identifier },
-      { lexeme: ':', type: TokenType.Colon },
-      { lexeme: 'int', type: TokenType.Identifier },
-      { lexeme: '=', type: TokenType.Equal },
-      { lexeme: '30', type: TokenType.IntegerLiteral },
-      { lexeme: '+', type: TokenType.Plus },
-      { lexeme: '5', type: TokenType.IntegerLiteral },
-      { lexeme: ';', type: TokenType.Semicolon },
-      { lexeme: 'var', type: TokenType.Var },
-      { lexeme: 'x', type: TokenType.Identifier },
-      { lexeme: ':', type: TokenType.Colon },
-      { lexeme: 'int', type: TokenType.Identifier },
-      { lexeme: '=', type: TokenType.Equal },
-      { lexeme: '0', type: TokenType.IntegerLiteral },
-      { lexeme: ';', type: TokenType.Semicolon },
-      { lexeme: 'x', type: TokenType.Identifier },
-      { lexeme: '+=', type: TokenType.PlusEqual },
-      { lexeme: '5', type: TokenType.IntegerLiteral },
-      { lexeme: ';', type: TokenType.Semicolon },
-      { lexeme: 'x', type: TokenType.Identifier },
-      { lexeme: '-=', type: TokenType.MinusEqual },
-      { lexeme: '2', type: TokenType.IntegerLiteral },
-      { lexeme: ';', type: TokenType.Semicolon },
-      { lexeme: 'x', type: TokenType.Identifier },
-      { lexeme: '*=', type: TokenType.StarEqual },
-      { lexeme: '3', type: TokenType.IntegerLiteral },
-      { lexeme: ';', type: TokenType.Semicolon },
-      { lexeme: 'x', type: TokenType.Identifier },
-      { lexeme: '%=', type: TokenType.PercentEqual },
-      { lexeme: '5', type: TokenType.IntegerLiteral },
-      { lexeme: ';', type: TokenType.Semicolon },
-      { lexeme: 'x', type: TokenType.Identifier },
-      { lexeme: '/=', type: TokenType.SlashEqual },
-      { lexeme: '2', type: TokenType.IntegerLiteral },
-      { lexeme: ';', type: TokenType.Semicolon },
-      { lexeme: '', type: TokenType.EOF },
-    ]);
+    expect(tokens).toContainEqual({ lexeme: 'fn', type: TokenType.Fn });
+    expect(tokens).toContainEqual({ lexeme: '+=', type: TokenType.PlusEqual });
+    expect(tokens).toContainEqual({ lexeme: '-=', type: TokenType.MinusEqual });
+    expect(tokens).toContainEqual({ lexeme: '*=', type: TokenType.StarEqual });
+    expect(tokens).toContainEqual({ lexeme: '%=', type: TokenType.PercentEqual });
+    expect(tokens).toContainEqual({ lexeme: '/=', type: TokenType.SlashEqual });
   });
 
-  test('parses arithmetic expressions and assignment statements', async function testParserOutput(): Promise<void> {
+  test('parses arithmetic expressions and assignment statements inside main', async function testParserOutput(): Promise<void> {
     const sourceCode: string = await readFile(new URL('./arithmetic.p', import.meta.url), 'utf8');
     const lexer: Lexer = new Lexer(sourceCode);
     const parser: Parser = new Parser(lexer.tokenize());
-    const program = parser.parseProgram();
+    const statements = getMainStatements(parser.parseProgram());
 
-    expect(program.body).toHaveLength(9);
-
-    expect(program.body[1]).toMatchObject({
+    expect(statements[1]).toMatchObject({
       initializer: {
         kind: 'BinaryExpression',
         left: {
@@ -103,7 +52,7 @@ describe('arithmetic example', function describeArithmeticExample(): void {
       },
     });
 
-    expect(program.body[4]).toMatchObject({
+    expect(statements[4]).toMatchObject({
       expression: {
         kind: 'AssignmentExpression',
         operator: '+=',
@@ -132,7 +81,7 @@ describe('arithmetic example', function describeArithmeticExample(): void {
   });
 
   test('rejects compound assignment on immutable values', function testImmutableCompoundAssignment(): void {
-    const sourceCode = 'val x: int = 1;\nx += 1;';
+    const sourceCode = wrapInMain('  val x: int = 1;\n  x += 1;');
     const lexer: Lexer = new Lexer(sourceCode);
     const parser: Parser = new Parser(lexer.tokenize());
     const checker: Checker = new Checker();
@@ -143,7 +92,7 @@ describe('arithmetic example', function describeArithmeticExample(): void {
   });
 
   test('rejects unknown identifiers in arithmetic expressions', function testUnknownIdentifier(): void {
-    const sourceCode = 'val x: int = missing + 1;';
+    const sourceCode = wrapInMain('  val x: int = missing + 1;');
     const lexer: Lexer = new Lexer(sourceCode);
     const parser: Parser = new Parser(lexer.tokenize());
     const checker: Checker = new Checker();

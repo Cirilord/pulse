@@ -1,6 +1,8 @@
 #include <stdbool.h>
 #include <stddef.h>
 
+int main(void);
+
 int main(void) {
   int whileCounter = 0;
   while ((whileCounter < 4)) {
@@ -21,3 +23,4 @@ int main(void) {
   } while ((doCounter < 4));
   return 0;
 }
+

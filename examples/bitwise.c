@@ -1,6 +1,8 @@
 #include <stdbool.h>
 #include <stddef.h>
 
+int main(void);
+
 int main(void) {
   const int andResult = (6 & 3);
   const int orResult = (6 | 3);
@@ -16,3 +18,4 @@ int main(void) {
   mask >>= 2;
   return 0;
 }
+

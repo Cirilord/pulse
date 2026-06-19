@@ -111,17 +111,6 @@ export class CGenerator {
       lines.push('');
     }
 
-    lines.push('int main(void) {');
-
-    for (const topLevel of program.body) {
-      if (topLevel.kind !== 'FunctionDeclaration') {
-        lines.push(...this.generateStatement(topLevel, 1));
-      }
-    }
-
-    lines.push('  return 0;');
-    lines.push('}');
-
     this.popScope();
 
     return `${lines.join('\n')}\n`;
@@ -704,6 +693,15 @@ export class CGenerator {
   }
 
   private getFunctionDeclarations(program: ProgramNode): FunctionDeclarationNode[] {
+    for (const topLevel of program.body) {
+      if (topLevel.kind !== 'FunctionDeclaration') {
+        throw new CGeneratorError(
+          'Top-level statements are not allowed. Declare a Pulse main function instead.',
+          topLevel.location
+        );
+      }
+    }
+
     return program.body.filter(function isFunctionDeclaration(topLevel): topLevel is FunctionDeclarationNode {
       return topLevel.kind === 'FunctionDeclaration';
     });

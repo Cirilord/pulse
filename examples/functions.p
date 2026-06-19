@@ -6,5 +6,9 @@ fn logValue(value: int): void {
   return;
 }
 
-val result: int = sum(10, 20);
-logValue(result);
+fn main(): int {
+  val result: int = sum(10, 20);
+  logValue(result);
+
+  return 0;
+}
