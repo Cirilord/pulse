@@ -1,4 +1,5 @@
 export type { BaseNode } from './base-node.js';
+export type { BlockStatementNode } from './block-statement-node.js';
 export type {
   AssignmentExpressionNode,
   AssignmentOperator,

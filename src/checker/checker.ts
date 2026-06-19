@@ -3,6 +3,7 @@ import { type TokenLocation } from '../lexer/token.js';
 import type {
   AssignmentExpressionNode,
   BinaryExpressionNode,
+  BlockStatementNode,
   ConditionalExpressionNode,
   ExpressionNode,
   ExpressionStatementNode,
@@ -42,18 +43,21 @@ export class CheckerError extends Error {
 }
 
 export class Checker {
-  private readonly symbols: Map<string, SymbolEntry>;
+  private readonly scopes: Map<string, SymbolEntry>[];
 
   public constructor() {
-    this.symbols = new Map<string, SymbolEntry>();
+    this.scopes = [];
   }
 
   public checkProgram(program: ProgramNode): void {
-    this.symbols.clear();
+    this.scopes.length = 0;
+    this.pushScope();
 
     for (const statement of program.body) {
       this.checkStatement(statement);
     }
+
+    this.popScope();
   }
 
   private assertExpressionAssignable(targetType: ResolvedType, expression: ExpressionNode): void {
@@ -253,6 +257,16 @@ export class Checker {
     return leftType;
   }
 
+  private checkBlockStatement(statement: BlockStatementNode): void {
+    this.pushScope();
+
+    for (const innerStatement of statement.body) {
+      this.checkStatement(innerStatement);
+    }
+
+    this.popScope();
+  }
+
   private checkConditionalExpression(expression: ConditionalExpressionNode): ResolvedType {
     const conditionType: ResolvedType = this.resolveExpressionType(expression.condition);
 
@@ -312,6 +326,9 @@ export class Checker {
 
   private checkStatement(statement: StatementNode): void {
     switch (statement.kind) {
+      case 'BlockStatement':
+        this.checkBlockStatement(statement);
+        return;
       case 'ExpressionStatement':
         this.checkExpressionStatement(statement);
         return;
@@ -322,7 +339,9 @@ export class Checker {
   }
 
   private checkVariableDeclaration(declaration: VariableDeclarationNode): void {
-    if (this.symbols.has(declaration.name.name)) {
+    const currentScope: Map<string, SymbolEntry> = this.peekScope();
+
+    if (currentScope.has(declaration.name.name)) {
       throw new CheckerError(`Variable "${declaration.name.name}" is already declared.`, declaration.name.location);
     }
 
@@ -334,7 +353,7 @@ export class Checker {
 
     this.assertExpressionAssignable(declaredType, declaration.initializer);
 
-    this.symbols.set(declaration.name.name, {
+    currentScope.set(declaration.name.name, {
       mutability: declaration.mutability,
       type: declaredType,
     });
@@ -358,6 +377,28 @@ export class Checker {
 
   private isNumericType(typeName: PrimitiveTypeName): boolean {
     return typeName === 'byte' || typeName === 'double' || typeName === 'float' || typeName === 'int';
+  }
+
+  private peekScope(): Map<string, SymbolEntry> {
+    const scope: Map<string, SymbolEntry> | undefined = this.scopes.at(-1);
+
+    if (scope === undefined) {
+      throw new Error('Checker requires at least one active scope.');
+    }
+
+    return scope;
+  }
+
+  private popScope(): void {
+    const scope: Map<string, SymbolEntry> | undefined = this.scopes.pop();
+
+    if (scope === undefined) {
+      throw new Error('Checker cannot pop an empty scope stack.');
+    }
+  }
+
+  private pushScope(): void {
+    this.scopes.push(new Map<string, SymbolEntry>());
   }
 
   private resolveEqualityExpressionType(expression: BinaryExpressionNode): ResolvedType {
@@ -426,13 +467,15 @@ export class Checker {
   }
 
   private resolveIdentifier(expression: IdentifierExpressionNode): SymbolEntry {
-    const symbol: SymbolEntry | undefined = this.symbols.get(expression.name);
+    for (let index = this.scopes.length - 1; index >= 0; index -= 1) {
+      const symbol: SymbolEntry | undefined = this.scopes[index]?.get(expression.name);
 
-    if (symbol === undefined) {
-      throw new CheckerError(`Unknown variable "${expression.name}".`, expression.location);
+      if (symbol !== undefined) {
+        return symbol;
+      }
     }
 
-    return symbol;
+    throw new CheckerError(`Unknown variable "${expression.name}".`, expression.location);
   }
 
   private resolveNamedType(type: NamedTypeNode): PrimitiveTypeName {

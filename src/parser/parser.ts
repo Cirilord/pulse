@@ -5,6 +5,7 @@ import type {
   AssignmentOperator,
   BinaryExpressionNode,
   BinaryOperator,
+  BlockStatementNode,
   ConditionalExpressionNode,
   ExpressionNode,
   ExpressionStatementNode,
@@ -334,6 +335,23 @@ export class Parser {
     return expression;
   }
 
+  private parseBlockStatement(): BlockStatementNode {
+    const leftBraceToken: Token = this.previous();
+    const statements: StatementNode[] = [];
+
+    while (!this.check(TokenType.RightBrace) && !this.isAtEnd()) {
+      statements.push(this.parseStatement());
+    }
+
+    const rightBraceToken: Token = this.consume(TokenType.RightBrace, 'Expected "}" after the block.');
+
+    return {
+      body: statements,
+      kind: 'BlockStatement',
+      location: this.mergeLocations(leftBraceToken.location, rightBraceToken.location),
+    };
+  }
+
   private parseComparisonExpression(): ExpressionNode {
     let expression: ExpressionNode = this.parseShiftExpression();
 
@@ -584,6 +602,10 @@ export class Parser {
   }
 
   private parseStatement(): StatementNode {
+    if (this.match(TokenType.LeftBrace)) {
+      return this.parseBlockStatement();
+    }
+
     if (this.match(TokenType.Var, TokenType.Val)) {
       return this.parseVariableDeclaration(this.previous());
     }

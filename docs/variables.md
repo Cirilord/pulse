@@ -54,6 +54,7 @@ val alias = null;
 - Conditional expressions `condition ? whenTrue : whenFalse` are available when the condition is a non-nullable `boolean` and both branches resolve to the same type
 - Pulse does not use truthy or falsy coercion for conditions or logical negation
 - Values such as `0`, `""`, `null`, and `boolean?` must be compared explicitly instead of being treated as booleans
+- Block scopes allow variable shadowing, so an inner block may declare a new variable with the same name as an outer declaration
 - Unary `+` and unary `-` are available for numeric expressions
 - Parentheses can be used to group expressions and control precedence
 - The current C backend maps Pulse `string` values to an internal `string_t` runtime struct

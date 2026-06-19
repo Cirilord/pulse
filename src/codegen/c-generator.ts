@@ -1,5 +1,6 @@
 import { type TokenLocation } from '../lexer/token.js';
 import type {
+  BlockStatementNode,
   ExpressionNode,
   ExpressionStatementNode,
   BinaryExpressionNode,
@@ -21,24 +22,21 @@ export class CGeneratorError extends Error {
 }
 
 export class CGenerator {
-  private readonly variableTypes: Map<string, TypeNode>;
+  private readonly scopes: Map<string, TypeNode>[];
 
   public constructor() {
-    this.variableTypes = new Map<string, TypeNode>();
+    this.scopes = [];
   }
 
   public generateProgram(program: ProgramNode): string {
-    this.variableTypes.clear();
-
-    for (const statement of program.body) {
-      if (statement.kind === 'VariableDeclaration') {
-        this.variableTypes.set(statement.name.name, statement.type);
-      }
-    }
+    this.scopes.length = 0;
 
     const usesStringType: boolean = this.usesStringType(program);
     const usesStringEquality: boolean = this.usesStringEquality(program);
     const lines: string[] = ['#include <stdbool.h>', '#include <stddef.h>'];
+
+    this.scopes.length = 0;
+    this.pushScope();
 
     if (usesStringEquality) {
       lines.push('#include <string.h>');
@@ -82,11 +80,13 @@ export class CGenerator {
     lines.push('int main(void) {');
 
     for (const statement of program.body) {
-      lines.push(`  ${this.generateStatement(statement)}`);
+      lines.push(...this.generateStatement(statement, 1));
     }
 
     lines.push('  return 0;');
     lines.push('}');
+
+    this.popScope();
 
     return `${lines.join('\n')}\n`;
   }
@@ -94,13 +94,22 @@ export class CGenerator {
   private collectNullableTypeNames(program: ProgramNode): string[] {
     const typeNames: Set<string> = new Set<string>();
 
-    for (const statement of program.body) {
+    this.collectNullableTypeNamesFromStatements(program.body, typeNames);
+
+    return [...typeNames].sort();
+  }
+
+  private collectNullableTypeNamesFromStatements(statements: StatementNode[], typeNames: Set<string>): void {
+    for (const statement of statements) {
+      if (statement.kind === 'BlockStatement') {
+        this.collectNullableTypeNamesFromStatements(statement.body, typeNames);
+        continue;
+      }
+
       if (statement.kind === 'VariableDeclaration' && statement.type.kind === 'NullableType') {
         typeNames.add(statement.type.type.name);
       }
     }
-
-    return [...typeNames].sort();
   }
 
   private expressionUsesStringEquality(expression: ExpressionNode): boolean {
@@ -155,6 +164,21 @@ export class CGenerator {
     }
 
     return this.generateNonNullableValue(type.name, expression);
+  }
+
+  private generateBlockStatement(statement: BlockStatementNode, indentLevel: number): string[] {
+    const lines: string[] = [`${this.indent(indentLevel)}{`];
+
+    this.pushScope();
+
+    for (const innerStatement of statement.body) {
+      lines.push(...this.generateStatement(innerStatement, indentLevel + 1));
+    }
+
+    this.popScope();
+    lines.push(`${this.indent(indentLevel)}}`);
+
+    return lines;
   }
 
   private generateConditionalExpression(expression: ConditionalExpressionNode): string {
@@ -355,12 +379,14 @@ export class CGenerator {
     return equalityExpression;
   }
 
-  private generateStatement(statement: StatementNode): string {
+  private generateStatement(statement: StatementNode, indentLevel: number): string[] {
     switch (statement.kind) {
+      case 'BlockStatement':
+        return this.generateBlockStatement(statement, indentLevel);
       case 'ExpressionStatement':
-        return this.generateExpressionStatement(statement);
+        return [`${this.indent(indentLevel)}${this.generateExpressionStatement(statement)}`];
       case 'VariableDeclaration':
-        return this.generateVariableDeclaration(statement);
+        return [`${this.indent(indentLevel)}${this.generateVariableDeclaration(statement)}`];
     }
   }
 
@@ -386,7 +412,7 @@ export class CGenerator {
     const cType: string = this.generateType(declaration.type, declaration.mutability);
     const initializer: string = this.generateAssignedValue(declaration.type, declaration.initializer);
 
-    this.variableTypes.set(declaration.name.name, declaration.type);
+    this.peekScope().set(declaration.name.name, declaration.type);
 
     return `${cType} ${declaration.name.name} = ${initializer};`;
   }
@@ -443,6 +469,10 @@ export class CGenerator {
     return `${this.getNonNullableCType(typeName)}_nullable`;
   }
 
+  private indent(level: number): string {
+    return '  '.repeat(level);
+  }
+
   private isStringEquality(expression: BinaryExpressionNode): boolean {
     if (expression.left.kind === 'NullLiteral' || expression.right.kind === 'NullLiteral') {
       const nonNullSide: ExpressionNode = expression.left.kind === 'NullLiteral' ? expression.right : expression.left;
@@ -463,6 +493,28 @@ export class CGenerator {
       ((rightType.kind === 'NullableType' && rightType.type.name === 'string') ||
         (rightType.kind === 'NamedType' && rightType.name === 'string'))
     );
+  }
+
+  private peekScope(): Map<string, TypeNode> {
+    const scope: Map<string, TypeNode> | undefined = this.scopes.at(-1);
+
+    if (scope === undefined) {
+      throw new Error('C generator requires at least one active scope.');
+    }
+
+    return scope;
+  }
+
+  private popScope(): void {
+    const scope: Map<string, TypeNode> | undefined = this.scopes.pop();
+
+    if (scope === undefined) {
+      throw new Error('C generator cannot pop an empty scope stack.');
+    }
+  }
+
+  private pushScope(): void {
+    this.scopes.push(new Map<string, TypeNode>());
   }
 
   private resolveConditionalExpressionType(expression: ConditionalExpressionNode): TypeNode {
@@ -558,27 +610,63 @@ export class CGenerator {
   }
 
   private resolveVariableType(name: string): TypeNode {
-    const typeNode: TypeNode | undefined = this.variableTypes.get(name);
+    for (let index = this.scopes.length - 1; index >= 0; index -= 1) {
+      const typeNode: TypeNode | undefined = this.scopes[index]?.get(name);
 
-    if (typeNode === undefined) {
-      throw new Error(`Unknown variable "${name}" in C generator.`);
+      if (typeNode !== undefined) {
+        return typeNode;
+      }
     }
 
-    return typeNode;
+    throw new Error(`Unknown variable "${name}" in C generator.`);
   }
 
   private usesStringEquality(program: ProgramNode): boolean {
-    return program.body.some((statement: StatementNode): boolean => {
+    this.scopes.length = 0;
+    this.pushScope();
+    const usesStringEquality: boolean = this.usesStringEqualityInStatements(program.body);
+    this.popScope();
+
+    return usesStringEquality;
+  }
+
+  private usesStringEqualityInStatements(statements: StatementNode[]): boolean {
+    return statements.some((statement: StatementNode): boolean => {
+      if (statement.kind === 'BlockStatement') {
+        this.pushScope();
+
+        const blockUsesStringEquality: boolean = this.usesStringEqualityInStatements(statement.body);
+
+        this.popScope();
+
+        return blockUsesStringEquality;
+      }
+
       if (statement.kind === 'ExpressionStatement') {
         return this.expressionUsesStringEquality(statement.expression);
       }
 
-      return this.expressionUsesStringEquality(statement.initializer);
+      const declarationUsesStringEquality: boolean = this.expressionUsesStringEquality(statement.initializer);
+      this.peekScope().set(statement.name.name, statement.type);
+
+      if (declarationUsesStringEquality) {
+        return true;
+      }
+
+      return false;
     });
   }
 
   private usesStringType(program: ProgramNode): boolean {
-    return program.body.some(function isStringDeclaration(statement: StatementNode): boolean {
+    return this.usesStringTypeInStatements(program.body);
+  }
+
+  private usesStringTypeInStatements(statements: StatementNode[]): boolean {
+    return statements.some((statement: StatementNode): boolean => {
+      if (statement.kind === 'BlockStatement') {
+        return this.usesStringTypeInStatements(statement.body);
+      }
+
       return (
         statement.kind === 'VariableDeclaration' &&
         ((statement.type.kind === 'NamedType' && statement.type.name === 'string') ||
