@@ -1,6 +1,7 @@
 import { type TokenLocation } from '../lexer/token.js';
 import type {
   BlockStatementNode,
+  DoWhileStatementNode,
   ExpressionNode,
   ExpressionStatementNode,
   BinaryExpressionNode,
@@ -108,6 +109,11 @@ export class CGenerator {
         continue;
       }
 
+      if (statement.kind === 'DoWhileStatement') {
+        this.collectNullableTypeNamesFromStatements(statement.body.body, typeNames);
+        continue;
+      }
+
       if (statement.kind === 'IfStatement') {
         this.collectNullableTypeNamesFromStatements(statement.thenBranch.body, typeNames);
 
@@ -198,6 +204,21 @@ export class CGenerator {
     const thenExpression: string = this.generateTypedExpression(resultType, expression.thenExpression);
 
     return `(${conditionExpression} ? ${thenExpression} : ${elseExpression})`;
+  }
+
+  private generateDoWhileStatement(statement: DoWhileStatementNode, indentLevel: number): string[] {
+    const lines: string[] = [`${this.indent(indentLevel)}do {`];
+
+    this.pushScope();
+
+    for (const bodyStatement of statement.body.body) {
+      lines.push(...this.generateStatement(bodyStatement, indentLevel + 1));
+    }
+
+    this.popScope();
+    lines.push(`${this.indent(indentLevel)}} while (${this.generateExpression(statement.condition)});`);
+
+    return lines;
   }
 
   private generateEqualityExpression(expression: BinaryExpressionNode): string {
@@ -428,6 +449,8 @@ export class CGenerator {
     switch (statement.kind) {
       case 'BlockStatement':
         return this.generateBlockStatement(statement, indentLevel);
+      case 'DoWhileStatement':
+        return this.generateDoWhileStatement(statement, indentLevel);
       case 'ExpressionStatement':
         return [`${this.indent(indentLevel)}${this.generateExpressionStatement(statement)}`];
       case 'IfStatement':
@@ -725,6 +748,18 @@ export class CGenerator {
         return this.usesStringEqualityInStatements([statement.elseBranch]);
       }
 
+      if (statement.kind === 'DoWhileStatement') {
+        if (this.expressionUsesStringEquality(statement.condition)) {
+          return true;
+        }
+
+        this.pushScope();
+        const bodyUsesStringEquality: boolean = this.usesStringEqualityInStatements(statement.body.body);
+        this.popScope();
+
+        return bodyUsesStringEquality;
+      }
+
       if (statement.kind === 'WhileStatement') {
         if (this.expressionUsesStringEquality(statement.condition)) {
           return true;
@@ -769,6 +804,10 @@ export class CGenerator {
             this.usesStringTypeInStatements(statement.elseBranch.body)) ||
           (statement.elseBranch?.kind === 'IfStatement' && this.usesStringTypeInStatements([statement.elseBranch]))
         );
+      }
+
+      if (statement.kind === 'DoWhileStatement') {
+        return this.usesStringTypeInStatements(statement.body.body);
       }
 
       if (statement.kind === 'WhileStatement') {

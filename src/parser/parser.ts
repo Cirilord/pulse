@@ -7,6 +7,7 @@ import type {
   BinaryOperator,
   BlockStatementNode,
   ConditionalExpressionNode,
+  DoWhileStatementNode,
   ExpressionNode,
   ExpressionStatementNode,
   IdentifierNode,
@@ -397,6 +398,27 @@ export class Parser {
     return conditionalExpression;
   }
 
+  private parseDoWhileStatement(keywordToken: Token): DoWhileStatementNode {
+    this.consume(TokenType.LeftBrace, 'Expected "{" after "do".');
+
+    const body: BlockStatementNode = this.parseBlockStatement();
+
+    this.consume(TokenType.While, 'Expected "while" after the do block.');
+    this.consume(TokenType.LeftParen, 'Expected "(" after "while".');
+
+    const condition: ExpressionNode = this.parseExpression();
+
+    this.consume(TokenType.RightParen, 'Expected ")" after the do-while condition.');
+    const semicolonToken: Token = this.consume(TokenType.Semicolon, 'Expected ";" after the do-while statement.');
+
+    return {
+      body,
+      condition,
+      kind: 'DoWhileStatement',
+      location: this.mergeLocations(keywordToken.location, semicolonToken.location),
+    };
+  }
+
   private parseElifBranch(keywordToken: Token): IfStatementNode {
     this.consume(TokenType.LeftParen, 'Expected "(" after "elif".');
 
@@ -658,6 +680,10 @@ export class Parser {
   }
 
   private parseStatement(): StatementNode {
+    if (this.match(TokenType.Do)) {
+      return this.parseDoWhileStatement(this.previous());
+    }
+
     if (this.match(TokenType.If)) {
       return this.parseIfStatement(this.previous());
     }

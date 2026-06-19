@@ -15,7 +15,7 @@ This README should be kept up to date as the project evolves.
 - A basic semantic checker is available in `src/checker`
 - A basic C generator is available in `src/codegen`
 - A basic native compilation runner is available in `src/compiler`
-- The compiler currently supports block statements with lexical scoping, `if`/`elif`/`else`, `while`, identifier references, grouping with parentheses, unary expressions, arithmetic, bitwise operations, comparisons, logical expressions, conditional expressions, null coalescing expressions, and compound assignment statements
+- The compiler currently supports block statements with lexical scoping, `if`/`elif`/`else`, `while`, `do while`, identifier references, grouping with parentheses, unary expressions, arithmetic, bitwise operations, comparisons, logical expressions, conditional expressions, null coalescing expressions, and compound assignment statements
 - Nullable equality with `==` and `!=` is supported, including comparisons against `null`
 - Conditions and logical negation use strict non-nullable `boolean` values only, with no truthy or falsy coercion
 - The `compile` command currently reads the input file, tokenizes it, parses it, checks it, generates C, and compiles it with `clang` or `gcc`

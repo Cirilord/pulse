@@ -7,6 +7,7 @@ export enum TokenType {
   CaretEqual = 'CaretEqual',
   Colon = 'Colon',
   Comma = 'Comma',
+  Do = 'Do',
   DoubleLiteral = 'DoubleLiteral',
   Elif = 'Elif',
   Else = 'Else',

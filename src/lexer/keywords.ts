@@ -1,6 +1,7 @@
 import { TokenType } from './token-type.js';
 
 export const KEYWORDS: ReadonlyMap<string, TokenType> = new Map<string, TokenType>([
+  ['do', TokenType.Do],
   ['elif', TokenType.Elif],
   ['else', TokenType.Else],
   ['false', TokenType.False],

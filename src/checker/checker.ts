@@ -5,6 +5,7 @@ import type {
   BinaryExpressionNode,
   BlockStatementNode,
   ConditionalExpressionNode,
+  DoWhileStatementNode,
   ExpressionNode,
   ExpressionStatementNode,
   IdentifierExpressionNode,
@@ -322,6 +323,19 @@ export class Checker {
     return thenType;
   }
 
+  private checkDoWhileStatement(statement: DoWhileStatementNode): void {
+    const conditionType: ResolvedType = this.resolveExpressionType(statement.condition);
+
+    if (conditionType.nullable || conditionType.name !== 'boolean') {
+      throw new CheckerError(
+        'Do-while statements require a non-nullable boolean condition.',
+        statement.condition.location
+      );
+    }
+
+    this.checkBlockStatement(statement.body);
+  }
+
   private checkExpressionStatement(statement: ExpressionStatementNode): void {
     this.resolveExpressionType(statement.expression);
   }
@@ -351,6 +365,9 @@ export class Checker {
     switch (statement.kind) {
       case 'BlockStatement':
         this.checkBlockStatement(statement);
+        return;
+      case 'DoWhileStatement':
+        this.checkDoWhileStatement(statement);
         return;
       case 'ExpressionStatement':
         this.checkExpressionStatement(statement);
