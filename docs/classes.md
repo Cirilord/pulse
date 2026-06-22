@@ -16,6 +16,7 @@ This document tracks the current class rules in Pulse.
 - `Type(...)` calls the class constructor
 - `Type.method(...)` calls a static method
 - `value.method(...)` calls an instance method
+- `isInstance(value, Type)` checks whether a class instance has the exact runtime type `Type`
 - `=` copies values
 - `Error` is a builtin class documented in `docs/errors.md`
 

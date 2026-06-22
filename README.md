@@ -22,7 +22,7 @@ This README should be kept up to date as the project evolves.
 - A basic native compilation runner is available in `src/compiler`
 - The compiler currently supports function declarations, function calls, explicit `return` statements, block statements with lexical scoping, `if`/`elif`/`else`, `while`, `do while`, `for`, `break`, `continue`, identifier references, grouping with parentheses, unary expressions, arithmetic, bitwise operations, comparisons, logical expressions, conditional expressions, null coalescing expressions, and compound assignment statements
 - Function, method, and constructor parameters currently require explicit `val` or `var`
-- The compiler currently supports classes with fields, constructors, instance methods, static methods, `this`, field access, method calls, and constructor calls
+- The compiler currently supports classes with fields, constructors, instance methods, static methods, `this`, field access, method calls, builtin `isInstance(value, Type)`, and constructor calls
 - The compiler currently provides a builtin `Error` class with a `message: string` field and `Error(message)` constructor calls
 - Nullable equality with `==` and `!=` is supported, including comparisons against `null`
 - Conditions and logical negation use strict non-nullable `boolean` values only, with no truthy or falsy coercion

@@ -24,6 +24,7 @@ static bool string_t_equal(const string_t left, const string_t right) {
 }
 
 typedef struct {
+  const char *pulse__type_name;
   string_t message;
 } Error;
 
@@ -38,6 +39,7 @@ int main(void);
 
 Error Error__constructor(const string_t message) {
   Error self = (Error){ 0 };
+  self.pulse__type_name = "Error";
   self.message = message;
   return self;
 }

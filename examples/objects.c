@@ -22,6 +22,7 @@ static bool string_t_equal(const string_t left, const string_t right) {
 }
 
 typedef struct {
+  const char *pulse__type_name;
   string_t name;
   int age;
 } User;
@@ -34,6 +35,7 @@ int main(void);
 
 User User__constructor(const string_t name, const int age) {
   User self = (User){ 0 };
+  self.pulse__type_name = "User";
   self.name = name;
   self.age = age;
   return self;
@@ -58,7 +60,8 @@ int main(void) {
   const int age = User__method__getAge(&user);
   User adult = User__static_method__createAdult(STRING_LITERAL("Bob"));
   const string_t adultName = adult.name;
-  if ((string_t_equal(adultName, STRING_LITERAL("Bob")))) {
+  const bool adultIsUser = (strcmp(adult.pulse__type_name, "User") == 0);
+  if ((adultIsUser && (string_t_equal(adultName, STRING_LITERAL("Bob"))))) {
     return age;
   }
   return 0;

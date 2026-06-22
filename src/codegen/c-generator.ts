@@ -85,13 +85,14 @@ export class CGenerator {
     const usesBuiltinError: boolean = this.classes.has(BUILTIN_ERROR_CLASS_NAME);
     const usesStringType: boolean = usesBuiltinError || this.usesStringType(program);
     const usesStringEquality: boolean = this.usesStringEquality(program);
+    const usesStringRuntimeHelpers: boolean = usesStringEquality || this.usesIsInstance(program);
     const lines: string[] = ['#include <stdbool.h>', '#include <stddef.h>'];
 
     if (usesBuiltinError) {
       lines.push('#include <stdio.h>', '#include <stdlib.h>');
     }
 
-    if (usesStringEquality) {
+    if (usesStringRuntimeHelpers) {
       lines.push('#include <string.h>');
     }
 
@@ -288,6 +289,7 @@ export class CGenerator {
   private emitClassDefinitions(lines: string[]): void {
     for (const classEntry of this.classes.values()) {
       lines.push('typedef struct {');
+      lines.push('  const char *pulse__type_name;');
 
       for (const field of classEntry.fields.values()) {
         lines.push(`  ${this.generateType(field.type, 'var')} ${field.name.name};`);
@@ -444,6 +446,19 @@ export class CGenerator {
 
   private generateCallExpression(expression: CallExpressionNode): string {
     if (expression.callee.kind === 'IdentifierExpression') {
+      if (expression.callee.name === 'isInstance') {
+        const classNameArgument: string | null = this.resolveClassReferenceName(expression.arguments[1]!);
+
+        if (classNameArgument === null) {
+          throw new CGeneratorError(
+            'Function "isInstance" expects a class reference as the second argument.',
+            expression.location
+          );
+        }
+
+        return `(strcmp(${this.generateTypeNameAccess(expression.arguments[0]!)}, "${classNameArgument}") == 0)`;
+      }
+
       if (this.classes.has(expression.callee.name)) {
         const classEntry: ClassCodegenEntry = this.classes.get(expression.callee.name)!;
         const constructorMethod: ClassMethodCodegenEntry | null = classEntry.constructorMethod;
@@ -554,6 +569,7 @@ export class CGenerator {
       lines.push(
         `${this.indent(1)}${classEntry.declaration.name.name} self = (${classEntry.declaration.name.name}){ 0 };`
       );
+      lines.push(`${this.indent(1)}self.pulse__type_name = "${classEntry.declaration.name.name}";`);
     }
 
     for (const statement of methodEntry.declaration.body.body) {
@@ -762,6 +778,18 @@ export class CGenerator {
     }
 
     return `(${objectExpression}).${expression.property.name}`;
+  }
+
+  private generateTypeNameAccess(expression: ExpressionNode): string {
+    if (expression.kind === 'ThisExpression') {
+      return this.currentMethod?.declaration.isConstructor ? 'self.pulse__type_name' : 'self->pulse__type_name';
+    }
+
+    if (expression.kind === 'IdentifierExpression') {
+      return `${expression.name}.pulse__type_name`;
+    }
+
+    return `(${this.generateExpression(expression)}).pulse__type_name`;
   }
 
   private generateForInitializer(initializer: ForInitializerNode): string {
@@ -1374,6 +1402,10 @@ export class CGenerator {
 
   private resolveCallExpressionType(expression: CallExpressionNode): TypeNode {
     if (expression.callee.kind === 'IdentifierExpression') {
+      if (expression.callee.name === 'isInstance') {
+        return { kind: 'NamedType', location: expression.location, name: 'boolean' };
+      }
+
       const functionEntry: FunctionCodegenEntry | undefined = this.functions.get(expression.callee.name);
 
       if (functionEntry !== undefined) {
@@ -1826,6 +1858,97 @@ export class CGenerator {
           ) ||
           topLevel.body.body.some(statementUsesBuiltinError)
         );
+      }
+
+      return false;
+    });
+  }
+
+  private usesIsInstance(program: ProgramNode): boolean {
+    const expressionUsesIsInstance = (expression: ExpressionNode): boolean => {
+      switch (expression.kind) {
+        case 'AssignmentExpression':
+          return expressionUsesIsInstance(expression.target) || expressionUsesIsInstance(expression.value);
+        case 'BinaryExpression':
+          return expressionUsesIsInstance(expression.left) || expressionUsesIsInstance(expression.right);
+        case 'BooleanLiteral':
+        case 'DoubleLiteral':
+        case 'IdentifierExpression':
+        case 'IntegerLiteral':
+        case 'NullLiteral':
+        case 'StringLiteral':
+        case 'ThisExpression':
+          return false;
+        case 'CallExpression':
+          return (
+            (expression.callee.kind === 'IdentifierExpression' && expression.callee.name === 'isInstance') ||
+            expressionUsesIsInstance(expression.callee) ||
+            expression.arguments.some(expressionUsesIsInstance)
+          );
+        case 'ConditionalExpression':
+          return (
+            expressionUsesIsInstance(expression.condition) ||
+            expressionUsesIsInstance(expression.thenExpression) ||
+            expressionUsesIsInstance(expression.elseExpression)
+          );
+        case 'GroupingExpression':
+        case 'UnaryExpression':
+          return expressionUsesIsInstance(expression.expression);
+        case 'MemberExpression':
+          return expressionUsesIsInstance(expression.object);
+      }
+    };
+
+    const statementUsesIsInstance = (statement: StatementNode): boolean => {
+      switch (statement.kind) {
+        case 'BlockStatement':
+          return statement.body.some(statementUsesIsInstance);
+        case 'BreakStatement':
+        case 'ContinueStatement':
+          return false;
+        case 'DoWhileStatement':
+          return statementUsesIsInstance(statement.body) || expressionUsesIsInstance(statement.condition);
+        case 'ExpressionStatement':
+          return expressionUsesIsInstance(statement.expression);
+        case 'ForStatement':
+          return (
+            (statement.initializer.kind === 'VariableDeclaration' &&
+              expressionUsesIsInstance(statement.initializer.initializer)) ||
+            (statement.initializer.kind !== 'VariableDeclaration' && expressionUsesIsInstance(statement.initializer)) ||
+            expressionUsesIsInstance(statement.condition) ||
+            expressionUsesIsInstance(statement.update) ||
+            statement.body.body.some(statementUsesIsInstance)
+          );
+        case 'IfStatement':
+          return (
+            expressionUsesIsInstance(statement.condition) ||
+            statement.thenBranch.body.some(statementUsesIsInstance) ||
+            (statement.elseBranch?.kind === 'BlockStatement' &&
+              statement.elseBranch.body.some(statementUsesIsInstance)) ||
+            (statement.elseBranch?.kind === 'IfStatement' && statementUsesIsInstance(statement.elseBranch))
+          );
+        case 'ReturnStatement':
+          return statement.expression !== null && expressionUsesIsInstance(statement.expression);
+        case 'VariableDeclaration':
+          return expressionUsesIsInstance(statement.initializer);
+        case 'WhileStatement':
+          return expressionUsesIsInstance(statement.condition) || statement.body.body.some(statementUsesIsInstance);
+      }
+    };
+
+    return program.body.some((topLevel: TopLevelNode): boolean => {
+      if (topLevel.kind === 'ClassDeclaration') {
+        return topLevel.members.some((member): boolean => {
+          if (member.kind === 'ClassFieldDeclaration') {
+            return false;
+          }
+
+          return member.body.body.some(statementUsesIsInstance);
+        });
+      }
+
+      if (topLevel.kind === 'FunctionDeclaration') {
+        return topLevel.body.body.some(statementUsesIsInstance);
       }
 
       return false;

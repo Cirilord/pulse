@@ -275,6 +275,10 @@ export class Checker {
 
   private checkCallExpression(expression: CallExpressionNode): ResolvedType {
     if (expression.callee.kind === 'IdentifierExpression') {
+      if (expression.callee.name === 'isInstance') {
+        return this.checkIsInstanceCall(expression);
+      }
+
       return this.checkIdentifierCallExpression(
         expression as CallExpressionNode & { callee: IdentifierExpressionNode }
       );
@@ -678,6 +682,38 @@ export class Checker {
     );
 
     return methodEntry.returnType!;
+  }
+
+  private checkIsInstanceCall(expression: CallExpressionNode): ResolvedType {
+    if (expression.arguments.length !== 2) {
+      throw new CheckerError('Function "isInstance" expects 2 arguments.', expression.location);
+    }
+
+    const instanceArgument: ExpressionNode = expression.arguments[0]!;
+    const instanceType: ResolvedType = this.resolveExpressionType(instanceArgument);
+
+    if (instanceType.kind !== 'class') {
+      throw new CheckerError(
+        'Function "isInstance" expects a class instance as the first argument.',
+        instanceArgument.location
+      );
+    }
+
+    const targetArgument: ExpressionNode = expression.arguments[1]!;
+    const targetObject: ClassReference | ResolvedType = this.resolveMemberObject(targetArgument);
+
+    if (!('kind' in targetObject) || targetObject.kind !== 'class_reference') {
+      throw new CheckerError(
+        'Function "isInstance" expects a class reference as the second argument.',
+        targetArgument.location
+      );
+    }
+
+    return {
+      kind: 'primitive',
+      name: 'boolean',
+      nullable: false,
+    };
   }
 
   private checkReturnStatement(statement: ReturnStatementNode): void {

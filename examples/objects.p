@@ -28,8 +28,9 @@ fn main(): int {
   val age: int = user.getAge();
   val adult: User = User.createAdult("Bob");
   val adultName: string = adult.name;
+  val adultIsUser: boolean = isInstance(adult, User);
 
-  if (adultName == "Bob") {
+  if (adultIsUser && adultName == "Bob") {
     return age;
   }
 

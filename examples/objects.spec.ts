@@ -69,6 +69,15 @@ describe('objects example', function describeObjectsExample(): void {
       name: { name: 'user' },
       type: { kind: 'NamedType', name: 'User' },
     });
+
+    expect(getMainStatements(program)[5]).toMatchObject({
+      initializer: {
+        callee: { kind: 'IdentifierExpression', name: 'isInstance' },
+        kind: 'CallExpression',
+      },
+      kind: 'VariableDeclaration',
+      name: { name: 'adultIsUser' },
+    });
   });
 
   test('checks examples/objects.p without semantic errors', async function testCheckerOutput(): Promise<void> {
@@ -100,6 +109,26 @@ describe('objects example', function describeObjectsExample(): void {
     const checker: Checker = new Checker();
 
     expect(function checkImmutableMutatingMethodCallProgram(): void {
+      checker.checkProgram(parser.parseProgram());
+    }).toThrow(CheckerError);
+  });
+
+  test('rejects non-class arguments in isInstance calls', function testInvalidIsInstanceArgument(): void {
+    const sourceCode =
+      `${wrapInMain('  val user: User = User("Ana", 20); val matches: boolean = isInstance(user, "User");\n  return 0;')}\n\n` +
+      'class User {\n' +
+      '  public val name: string;\n' +
+      '  private var age: int;\n\n' +
+      '  public fn constructor(val name: string, val age: int) {\n' +
+      '    this.name = name;\n' +
+      '    this.age = age;\n' +
+      '  }\n' +
+      '}';
+    const lexer: Lexer = new Lexer(sourceCode);
+    const parser: Parser = new Parser(lexer.tokenize());
+    const checker: Checker = new Checker();
+
+    expect(function checkInvalidIsInstanceArgumentProgram(): void {
       checker.checkProgram(parser.parseProgram());
     }).toThrow(CheckerError);
   });
