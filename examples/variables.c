@@ -11,12 +11,12 @@ typedef struct {
 typedef struct {
   bool is_null;
   float value;
-} float_nullable;
+} float_t_nullable;
 
 typedef struct {
   bool is_null;
   int value;
-} int_nullable;
+} int_t_nullable;
 
 typedef struct {
   bool is_null;
@@ -34,8 +34,8 @@ int main(void) {
   const float f = 12.25f;
   const char g = 'Z';
   string_t_nullable nickname = (string_t_nullable){ .is_null = true, .value = (string_t){ .length = 0, .data = NULL } };
-  int_nullable score = (int_nullable){ .is_null = true, .value = 0 };
-  const float_nullable ratio = (float_nullable){ .is_null = true, .value = 0.0f };
+  int_t_nullable score = (int_t_nullable){ .is_null = true, .value = 0 };
+  const float_t_nullable ratio = (float_t_nullable){ .is_null = true, .value = 0.0f };
   return 0;
 }
 

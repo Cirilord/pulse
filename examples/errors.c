@@ -49,7 +49,7 @@ typedef struct {
 typedef struct {
   bool is_null;
   int value;
-} int_nullable;
+} int_t_nullable;
 
 typedef struct {
   bool is_null;
@@ -57,7 +57,7 @@ typedef struct {
 } unknown_t_nullable;
 
 typedef struct {
-  int_nullable value;
+  int_t_nullable value;
   unknown_t_nullable error;
 } parse__result_t;
 
@@ -83,9 +83,9 @@ IoError IoError__constructor(const string_t message) {
 
 parse__result_t parse(const string_t text) {
   if ((string_t_equal(text, STRING_LITERAL("")))) {
-    return (parse__result_t){ .value = (int_nullable){ .is_null = true, .value = 0 }, .error = (unknown_t_nullable){ .is_null = false, .value = (unknown_t){ .type_name = "ParseError", .value.ParseError_value = ParseError__constructor(STRING_LITERAL("Empty text")) } } };
+    return (parse__result_t){ .value = (int_t_nullable){ .is_null = true, .value = 0 }, .error = (unknown_t_nullable){ .is_null = false, .value = (unknown_t){ .type_name = "ParseError", .value.ParseError_value = ParseError__constructor(STRING_LITERAL("Empty text")) } } };
   }
-  return (parse__result_t){ .value = (int_nullable){ .is_null = false, .value = 10 }, .error = (unknown_t_nullable){ .is_null = true, .value = { .type_name = NULL } } };
+  return (parse__result_t){ .value = (int_t_nullable){ .is_null = false, .value = 10 }, .error = (unknown_t_nullable){ .is_null = true, .value = { .type_name = NULL } } };
 }
 
 IoError_nullable save(const string_t text) {
@@ -97,7 +97,7 @@ IoError_nullable save(const string_t text) {
 
 int main(void) {
   const parse__result_t pulse__result_0 = parse(STRING_LITERAL(""));
-  const int_nullable value = pulse__result_0.value;
+  const int_t_nullable value = pulse__result_0.value;
   const unknown_t_nullable err = pulse__result_0.error;
   IoError_nullable saveErr = save(STRING_LITERAL("ok"));
   if ((!saveErr.is_null)) {

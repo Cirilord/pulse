@@ -1420,7 +1420,26 @@ export class CGenerator {
   }
 
   private getNullableCType(typeName: string): string {
-    return `${this.getNonNullableCType(typeName)}_nullable`;
+    switch (typeName) {
+      case 'boolean':
+        return 'boolean_t_nullable';
+      case 'byte':
+        return 'byte_t_nullable';
+      case 'char':
+        return 'char_t_nullable';
+      case 'double':
+        return 'double_t_nullable';
+      case 'float':
+        return 'float_t_nullable';
+      case 'int':
+        return 'int_t_nullable';
+      case 'string':
+        return 'string_t_nullable';
+      case 'unknown':
+        return 'unknown_t_nullable';
+      default:
+        return `${this.getNonNullableCType(typeName)}_nullable`;
+    }
   }
 
   private indent(level: number): string {
