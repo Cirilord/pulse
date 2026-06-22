@@ -18,6 +18,7 @@ export const KEYWORDS: ReadonlyMap<string, TokenType> = new Map<string, TokenTyp
   ['return', TokenType.Return],
   ['static', TokenType.Static],
   ['this', TokenType.This],
+  ['throws', TokenType.Throws],
   ['true', TokenType.True],
   ['val', TokenType.Val],
   ['var', TokenType.Var],

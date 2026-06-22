@@ -97,6 +97,7 @@ function createConstructor(): ClassMethodDeclarationNode {
     name: createIdentifier('constructor'),
     parameters: [createParameter('val', 'message', 'string')],
     returnType: null,
+    throws: [],
   };
 }
 

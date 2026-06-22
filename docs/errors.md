@@ -1,6 +1,6 @@
 # Errors
 
-This document tracks the current builtin `Error` support in Pulse.
+This document tracks the current `throws` and error-return support in Pulse.
 
 ## Rules
 
@@ -8,23 +8,60 @@ This document tracks the current builtin `Error` support in Pulse.
 - You do not declare `class Error` in user code
 - `Error(message)` constructs an `Error` value
 - `Error` currently exposes the public `message: string` field
-- The C backend emits a runtime error handler when a program uses `Error`
-- The runtime handler is internal for now and exists to support future error features
+- Functions and methods can declare `throws TypeA, TypeB`
+- Throwing functions with a non-`void` return type must return `value, error`
+- Throwing functions with a `void` return type must return only the error value
+- Single thrown types are captured with their exact nullable type
+- Multiple thrown types are captured with `unknown?`
+- `isInstance(value, Type)` can be used to refine `unknown?` error bindings
 
 ## Valid Example
 
 ```pulse
-fn buildError(): Error {
-  return Error("Invalid age");
+class ParseError {
+  public val message: string;
+
+  public fn constructor(val message: string) {
+    this.message = message;
+  }
+}
+
+class IoError {
+  public val message: string;
+
+  public fn constructor(val message: string) {
+    this.message = message;
+  }
+}
+
+fn parse(val text: string): int? throws ParseError, IoError {
+  if (text == "") {
+    return null, ParseError("Empty text");
+  }
+
+  return 10, null;
+}
+
+fn save(val text: string): void throws IoError {
+  if (text == "") {
+    return IoError("Empty text");
+  }
+
+  return null;
 }
 
 fn main(): int {
-  val error: Error = buildError();
+  val value: int?, val err: unknown? = parse("");
+  val saveErr: IoError? = save("ok");
 
-  if (error.message == "Invalid age") {
+  if (saveErr != null) {
+    return 2;
+  }
+
+  if (err != null && isInstance(err, ParseError)) {
     return 1;
   }
 
-  return 0;
+  return value ?? 0;
 }
 ```

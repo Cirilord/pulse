@@ -21,6 +21,7 @@ import type {
   ForStatementNode,
   IfStatementNode,
   MemberExpressionNode,
+  MultiVariableDeclarationNode,
   ProgramNode,
   ReturnStatementNode,
   StatementNode,
@@ -61,18 +62,24 @@ export class CGenerator {
 
   private currentClass: ClassCodegenEntry | null;
 
+  private currentFunction: FunctionCodegenEntry | null;
+
   private currentMethod: ClassMethodCodegenEntry | null;
 
   private readonly functions: Map<string, FunctionCodegenEntry>;
 
   private readonly scopes: Map<string, TypeNode>[];
 
+  private temporaryCounter: number;
+
   public constructor() {
     this.classes = new Map<string, ClassCodegenEntry>();
     this.currentClass = null;
+    this.currentFunction = null;
     this.currentMethod = null;
     this.functions = new Map<string, FunctionCodegenEntry>();
     this.scopes = [];
+    this.temporaryCounter = 0;
   }
 
   public generateProgram(program: ProgramNode): string {
@@ -81,11 +88,16 @@ export class CGenerator {
     this.functions.clear();
     this.collectFunctions(program);
     this.scopes.length = 0;
+    this.currentFunction = null;
+    this.currentMethod = null;
+    this.currentClass = null;
+    this.temporaryCounter = 0;
 
     const usesBuiltinError: boolean = this.classes.has(BUILTIN_ERROR_CLASS_NAME);
     const usesStringType: boolean = usesBuiltinError || this.usesStringType(program);
     const usesStringEquality: boolean = this.usesStringEquality(program);
     const usesStringRuntimeHelpers: boolean = usesStringEquality || this.usesIsInstance(program);
+    const usesUnknownType: boolean = this.usesUnknownType(program);
     const lines: string[] = ['#include <stdbool.h>', '#include <stddef.h>'];
 
     if (usesBuiltinError) {
@@ -125,11 +137,16 @@ export class CGenerator {
 
     this.emitClassDefinitions(lines);
 
+    if (usesUnknownType) {
+      this.emitUnknownTypeDefinitions(lines);
+    }
+
     if (usesBuiltinError) {
       this.emitRuntimeErrorHandler(lines);
     }
 
     this.emitNullableTypeDefinitions(program, lines);
+    this.emitThrowingResultDefinitions(program, lines);
     this.emitPrototypes(program, lines);
     this.emitImplementations(program, lines);
 
@@ -198,12 +215,32 @@ export class CGenerator {
     }
   }
 
+  private callableReturnsResultStruct(declaration: ClassMethodDeclarationNode | FunctionDeclarationNode): boolean {
+    return (
+      declaration.throws.length > 0 &&
+      declaration.returnType !== null &&
+      !(declaration.returnType.kind === 'NamedType' && declaration.returnType.name === 'void')
+    );
+  }
+
   private collectNullableTypeNames(program: ProgramNode): string[] {
     const typeNames: Set<string> = new Set<string>();
 
     const collectType = (type: TypeNode): void => {
       if (type.kind === 'NullableType') {
         typeNames.add(type.type.name);
+      }
+    };
+
+    const collectThrows = (throwsTypes: TypeNode[]): void => {
+      if (throwsTypes.length === 1) {
+        const throwType: TypeNode = throwsTypes[0]!;
+        typeNames.add(throwType.kind === 'NullableType' ? throwType.type.name : throwType.name);
+        return;
+      }
+
+      if (throwsTypes.length > 1) {
+        typeNames.add('unknown');
       }
     };
 
@@ -234,6 +271,11 @@ export class CGenerator {
               collectFromStatements([statement.elseBranch]);
             }
 
+            break;
+          case 'MultiVariableDeclaration':
+            for (const binding of statement.bindings) {
+              collectType(binding.type);
+            }
             break;
           case 'VariableDeclaration':
             collectType(statement.type);
@@ -266,6 +308,8 @@ export class CGenerator {
             collectType(member.returnType);
           }
 
+          collectThrows(member.throws);
+
           collectFromStatements(member.body.body);
         }
 
@@ -278,6 +322,8 @@ export class CGenerator {
         for (const parameter of topLevel.parameters) {
           collectType(parameter.type);
         }
+
+        collectThrows(topLevel.throws);
 
         collectFromStatements(topLevel.body.body);
       }
@@ -324,6 +370,63 @@ export class CGenerator {
     lines.push('  fprintf(stderr, "%.*s\\n", (int)error.message.length, error.message.data);');
     lines.push('  exit(EXIT_FAILURE);');
     lines.push('}');
+    lines.push('');
+  }
+
+  private emitThrowingResultDefinitions(program: ProgramNode, lines: string[]): void {
+    for (const classEntry of this.classes.values()) {
+      if (
+        classEntry.constructorMethod !== null &&
+        this.callableReturnsResultStruct(classEntry.constructorMethod.declaration)
+      ) {
+        lines.push(`typedef struct {`);
+        lines.push(`  ${this.generateType(classEntry.constructorMethod.declaration.returnType!, 'var')} value;`);
+        lines.push(`  ${this.getThrowErrorCType(classEntry.constructorMethod.declaration.throws)} error;`);
+        lines.push(
+          `} ${this.getCallableResultTypeName(classEntry.declaration.name.name, classEntry.constructorMethod.declaration)};`
+        );
+        lines.push('');
+      }
+
+      for (const methodEntry of classEntry.methods.values()) {
+        if (!this.callableReturnsResultStruct(methodEntry.declaration)) {
+          continue;
+        }
+
+        lines.push(`typedef struct {`);
+        lines.push(`  ${this.generateType(methodEntry.declaration.returnType!, 'var')} value;`);
+        lines.push(`  ${this.getThrowErrorCType(methodEntry.declaration.throws)} error;`);
+        lines.push(`} ${this.getCallableResultTypeName(classEntry.declaration.name.name, methodEntry.declaration)};`);
+        lines.push('');
+      }
+    }
+
+    for (const functionDeclaration of this.getFunctionDeclarations(program)) {
+      if (!this.callableReturnsResultStruct(functionDeclaration)) {
+        continue;
+      }
+
+      lines.push('typedef struct {');
+      lines.push(`  ${this.generateType(functionDeclaration.returnType, 'var')} value;`);
+      lines.push(`  ${this.getThrowErrorCType(functionDeclaration.throws)} error;`);
+      lines.push(`} ${this.getCallableResultTypeName(null, functionDeclaration)};`);
+      lines.push('');
+    }
+  }
+
+  private emitUnknownTypeDefinitions(lines: string[]): void {
+    lines.push('typedef union {');
+
+    for (const classEntry of this.classes.values()) {
+      lines.push(`  ${classEntry.declaration.name.name} ${classEntry.declaration.name.name}_value;`);
+    }
+
+    lines.push('} unknown_value_t;');
+    lines.push('');
+    lines.push('typedef struct {');
+    lines.push('  const char *type_name;');
+    lines.push('  unknown_value_t value;');
+    lines.push('} unknown_t;');
     lines.push('');
   }
 
@@ -415,6 +518,10 @@ export class CGenerator {
 
   private generateAssignedValue(type: TypeNode, expression: ExpressionNode): string {
     if (type.kind === 'NullableType') {
+      if (type.type.name === 'unknown') {
+        return this.generateUnknownNullableValue(expression);
+      }
+
       if (expression.kind === 'NullLiteral') {
         return `(${this.getNullableCType(type.type.name)}){ .is_null = true, .value = ${this.getDefaultValue(type.type.name)} }`;
       }
@@ -423,6 +530,10 @@ export class CGenerator {
         type.type.name,
         expression
       )} }`;
+    }
+
+    if (type.name === 'unknown') {
+      return this.generateUnknownValue(expression);
     }
 
     return this.generateNonNullableValue(type.name, expression);
@@ -456,7 +567,7 @@ export class CGenerator {
           );
         }
 
-        return `(strcmp(${this.generateTypeNameAccess(expression.arguments[0]!)}, "${classNameArgument}") == 0)`;
+        return this.generateIsInstanceExpression(expression.arguments[0]!, classNameArgument);
       }
 
       if (this.classes.has(expression.callee.name)) {
@@ -555,8 +666,10 @@ export class CGenerator {
   ): string[] {
     this.pushScope();
     const previousClass: ClassCodegenEntry | null = this.currentClass;
+    const previousFunction: FunctionCodegenEntry | null = this.currentFunction;
     const previousMethod: ClassMethodCodegenEntry | null = this.currentMethod;
     this.currentClass = classEntry;
+    this.currentFunction = null;
     this.currentMethod = methodEntry;
 
     for (const parameter of methodEntry.declaration.parameters) {
@@ -581,6 +694,7 @@ export class CGenerator {
     }
 
     this.currentClass = previousClass;
+    this.currentFunction = previousFunction;
     this.currentMethod = previousMethod;
     this.popScope();
     lines.push('}');
@@ -600,15 +714,67 @@ export class CGenerator {
     return `${className}__method__${method.name.name}`;
   }
 
+  private getCallableResultTypeName(
+    ownerClassName: string | null,
+    declaration: ClassMethodDeclarationNode | FunctionDeclarationNode
+  ): string {
+    if (ownerClassName === null) {
+      return `${declaration.name.name}__result_t`;
+    }
+
+    return `${this.generateClassMethodName(ownerClassName, declaration as ClassMethodDeclarationNode)}__result_t`;
+  }
+
+  private getThrowErrorCType(throwsTypes: TypeNode[]): string {
+    if (throwsTypes.length === 1) {
+      const throwType: TypeNode = throwsTypes[0]!;
+      return this.getNullableCType(throwType.kind === 'NullableType' ? throwType.type.name : throwType.name);
+    }
+
+    return this.getNullableCType('unknown');
+  }
+
+  private generateCallableCType(
+    ownerClassName: string | null,
+    declaration: ClassMethodDeclarationNode | FunctionDeclarationNode
+  ): string {
+    if (declaration.throws.length === 0) {
+      if ('isConstructor' in declaration && declaration.isConstructor) {
+        return ownerClassName ?? declaration.name.name;
+      }
+
+      return this.generateType(declaration.returnType!, 'var');
+    }
+
+    if (this.callableReturnsResultStruct(declaration)) {
+      return this.getCallableResultTypeName(ownerClassName, declaration);
+    }
+
+    return this.getThrowErrorCType(declaration.throws);
+  }
+
+  private getCurrentCallableDeclaration(): ClassMethodDeclarationNode | FunctionDeclarationNode {
+    if (this.currentMethod !== null) {
+      return this.currentMethod.declaration;
+    }
+
+    if (this.currentFunction !== null) {
+      return this.currentFunction.declaration;
+    }
+
+    throw new Error('C generator requires an active callable declaration.');
+  }
+
   private generateClassMethodPrototype(classEntry: ClassCodegenEntry, methodEntry: ClassMethodCodegenEntry): string {
     const method: ClassMethodDeclarationNode = methodEntry.declaration;
+    const returnType: string = this.generateCallableCType(classEntry.declaration.name.name, method);
 
     if (method.isConstructor) {
       const parameters: string = method.parameters
         .map((parameter: FunctionParameterNode): string => this.generateFunctionParameter(parameter))
         .join(', ');
 
-      return `${classEntry.declaration.name.name} ${this.generateClassMethodName(classEntry.declaration.name.name, method)}(${parameters.length > 0 ? parameters : 'void'});`;
+      return `${returnType} ${this.generateClassMethodName(classEntry.declaration.name.name, method)}(${parameters.length > 0 ? parameters : 'void'});`;
     }
 
     const parameters: string[] = [];
@@ -621,7 +787,7 @@ export class CGenerator {
       parameters.push(this.generateFunctionParameter(parameter));
     }
 
-    return `${this.generateType(method.returnType!, 'var')} ${this.generateClassMethodName(classEntry.declaration.name.name, method)}(${parameters.length > 0 ? parameters.join(', ') : 'void'});`;
+    return `${returnType} ${this.generateClassMethodName(classEntry.declaration.name.name, method)}(${parameters.length > 0 ? parameters.join(', ') : 'void'});`;
   }
 
   private generateConditionalExpression(expression: ConditionalExpressionNode): string {
@@ -780,6 +946,25 @@ export class CGenerator {
     return `(${objectExpression}).${expression.property.name}`;
   }
 
+  private generateIsInstanceExpression(expression: ExpressionNode, className: string): string {
+    const expressionType: TypeNode = this.resolveExpressionType(expression);
+    const generatedExpression: string = this.generateExpression(expression);
+
+    if (expressionType.kind === 'NullableType') {
+      if (expressionType.type.name === 'unknown') {
+        return `(!${generatedExpression}.is_null && strcmp(${generatedExpression}.value.type_name, "${className}") == 0)`;
+      }
+
+      return `(!${generatedExpression}.is_null && strcmp(${generatedExpression}.value.pulse__type_name, "${className}") == 0)`;
+    }
+
+    if (expressionType.name === 'unknown') {
+      return `(strcmp(${generatedExpression}.type_name, "${className}") == 0)`;
+    }
+
+    return `(strcmp(${this.generateTypeNameAccess(expression)}, "${className}") == 0)`;
+  }
+
   private generateTypeNameAccess(expression: ExpressionNode): string {
     if (expression.kind === 'ThisExpression') {
       return this.currentMethod?.declaration.isConstructor ? 'self.pulse__type_name' : 'self->pulse__type_name';
@@ -825,6 +1010,12 @@ export class CGenerator {
 
   private generateFunctionDeclaration(statement: FunctionDeclarationNode): string[] {
     this.pushScope();
+    const previousFunction: FunctionCodegenEntry | null = this.currentFunction;
+    const previousMethod: ClassMethodCodegenEntry | null = this.currentMethod;
+    const previousClass: ClassCodegenEntry | null = this.currentClass;
+    this.currentFunction = this.functions.get(statement.name.name)!;
+    this.currentMethod = null;
+    this.currentClass = null;
 
     for (const parameter of statement.parameters) {
       this.peekScope().set(parameter.name.name, parameter.type);
@@ -836,6 +1027,9 @@ export class CGenerator {
       lines.push(...this.generateStatement(bodyStatement, 1));
     }
 
+    this.currentFunction = previousFunction;
+    this.currentMethod = previousMethod;
+    this.currentClass = previousClass;
     this.popScope();
     lines.push('}');
 
@@ -852,7 +1046,7 @@ export class CGenerator {
       .join(', ');
     const cParameters: string = parameters.length > 0 ? parameters : 'void';
 
-    return `${this.generateType(statement.returnType, 'var')} ${statement.name.name}(${cParameters});`;
+    return `${this.generateCallableCType(null, statement)} ${statement.name.name}(${cParameters});`;
   }
 
   private generateIfStatement(statement: IfStatementNode, indentLevel: number, isElseIf: boolean = false): string[] {
@@ -964,12 +1158,74 @@ export class CGenerator {
     return equalityExpression;
   }
 
-  private generateReturnStatement(statement: ReturnStatementNode, indentLevel: number): string[] {
-    if (statement.expression === null) {
-      return [`${this.indent(indentLevel)}return;`];
+  private generateThrowErrorValue(throwsTypes: TypeNode[], expression: ExpressionNode): string {
+    if (throwsTypes.length === 1) {
+      return this.generateAssignedValue(
+        {
+          kind: 'NullableType',
+          location: expression.location,
+          type: throwsTypes[0] as Extract<TypeNode, { kind: 'NamedType' }>,
+        },
+        expression
+      );
     }
 
-    return [`${this.indent(indentLevel)}return ${this.generateExpression(statement.expression)};`];
+    return this.generateUnknownNullableValue(expression);
+  }
+
+  private generateUnknownNullableValue(expression: ExpressionNode): string {
+    if (expression.kind === 'NullLiteral') {
+      return `(${this.getNullableCType('unknown')}){ .is_null = true, .value = { .type_name = NULL } }`;
+    }
+
+    return `(${this.getNullableCType('unknown')}){ .is_null = false, .value = ${this.generateUnknownValue(expression)} }`;
+  }
+
+  private generateUnknownValue(expression: ExpressionNode): string {
+    const expressionType: TypeNode = this.resolveExpressionType(expression);
+    const classTypeName: string =
+      expressionType.kind === 'NullableType'
+        ? this.resolveClassTypeName(expressionType.type)
+        : this.resolveClassTypeName(expressionType);
+    const valueExpression: string =
+      expressionType.kind === 'NullableType'
+        ? `${this.generateExpression(expression)}.value`
+        : this.generateExpression(expression);
+
+    return `(unknown_t){ .type_name = "${classTypeName}", .value.${classTypeName}_value = ${valueExpression} }`;
+  }
+
+  private generateReturnStatement(statement: ReturnStatementNode, indentLevel: number): string[] {
+    const declaration: ClassMethodDeclarationNode | FunctionDeclarationNode = this.getCurrentCallableDeclaration();
+    const returnType: TypeNode | null = declaration.returnType;
+
+    if (declaration.throws.length === 0) {
+      if (statement.values.length === 0) {
+        return [`${this.indent(indentLevel)}return;`];
+      }
+
+      return [`${this.indent(indentLevel)}return ${this.generateExpression(statement.values[0]!)};`];
+    }
+
+    if (returnType !== null && returnType.kind === 'NamedType' && returnType.name === 'void') {
+      return [
+        `${this.indent(indentLevel)}return ${this.generateThrowErrorValue(declaration.throws, statement.values[0]!)};`,
+      ];
+    }
+
+    if (returnType === null) {
+      throw new CGeneratorError('Constructors cannot use throwing return values.', statement.location);
+    }
+
+    return [
+      `${this.indent(indentLevel)}return (${this.getCallableResultTypeName(
+        this.currentClass?.declaration.name.name ?? null,
+        declaration
+      )}){ .value = ${this.generateAssignedValue(returnType, statement.values[0]!)}, .error = ${this.generateThrowErrorValue(
+        declaration.throws,
+        statement.values[1]!
+      )} };`,
+    ];
   }
 
   private generateScopedBlock(statements: StatementNode[], indentLevel: number, openingLine: string): string[] {
@@ -1003,6 +1259,8 @@ export class CGenerator {
         return this.generateForStatement(statement, indentLevel);
       case 'IfStatement':
         return this.generateIfStatement(statement, indentLevel);
+      case 'MultiVariableDeclaration':
+        return this.generateMultiVariableDeclaration(statement, indentLevel);
       case 'ReturnStatement':
         return this.generateReturnStatement(statement, indentLevel);
       case 'VariableDeclaration':
@@ -1034,11 +1292,54 @@ export class CGenerator {
 
   private generateVariableDeclaration(declaration: VariableDeclarationNode): string {
     const cType: string = this.generateType(declaration.type, declaration.mutability);
-    const initializer: string = this.generateAssignedValue(declaration.type, declaration.initializer);
+    let initializer: string = this.generateAssignedValue(declaration.type, declaration.initializer);
+
+    if (declaration.initializer.kind === 'CallExpression') {
+      const throwsReturnType: TypeNode | null = this.resolveThrowsReturnType(declaration.initializer);
+
+      if (throwsReturnType !== null && throwsReturnType.kind === 'NamedType' && throwsReturnType.name === 'void') {
+        initializer = this.generateCallExpression(declaration.initializer);
+      }
+    }
 
     this.peekScope().set(declaration.name.name, declaration.type);
 
     return `${cType} ${declaration.name.name} = ${initializer};`;
+  }
+
+  private generateMultiVariableDeclaration(statement: MultiVariableDeclarationNode, indentLevel: number): string[] {
+    if (statement.initializer.kind !== 'CallExpression') {
+      throw new CGeneratorError(
+        'Multiple variable declarations require a call expression.',
+        statement.initializer.location
+      );
+    }
+
+    const resultType: TypeNode | null = this.resolveThrowsReturnType(statement.initializer);
+
+    if (resultType === null || (resultType.kind === 'NamedType' && resultType.name === 'void')) {
+      throw new CGeneratorError(
+        'Multiple variable declarations require a throwing call with a return value.',
+        statement.initializer.location
+      );
+    }
+
+    const resultVariableName: string = `pulse__result_${this.temporaryCounter++}`;
+    const lines: string[] = [
+      `${this.indent(indentLevel)}const ${this.resolveCallResultCType(statement.initializer)} ${resultVariableName} = ${this.generateCallExpression(statement.initializer)};`,
+    ];
+    const valueBinding = statement.bindings[0]!;
+    const errorBinding = statement.bindings[1]!;
+    const valueType: string = this.generateType(valueBinding.type, valueBinding.mutability);
+    const errorType: string = this.generateType(errorBinding.type, errorBinding.mutability);
+
+    this.peekScope().set(valueBinding.name.name, valueBinding.type);
+    this.peekScope().set(errorBinding.name.name, errorBinding.type);
+
+    lines.push(`${this.indent(indentLevel)}${valueType} ${valueBinding.name.name} = ${resultVariableName}.value;`);
+    lines.push(`${this.indent(indentLevel)}${errorType} ${errorBinding.name.name} = ${resultVariableName}.error;`);
+
+    return lines;
   }
 
   private generateWhileStatement(statement: WhileStatementNode, indentLevel: number): string[] {
@@ -1061,6 +1362,8 @@ export class CGenerator {
         return '0.0f';
       case 'int':
         return '0';
+      case 'unknown':
+        return '(unknown_t){ .type_name = NULL }';
       case 'string':
         return '(string_t){ .length = 0, .data = NULL }';
       default:
@@ -1101,6 +1404,8 @@ export class CGenerator {
         return 'float';
       case 'int':
         return 'int';
+      case 'unknown':
+        return 'unknown_t';
       case 'string':
         return 'string_t';
       case 'void':
@@ -1130,6 +1435,7 @@ export class CGenerator {
       typeName === 'double' ||
       typeName === 'float' ||
       typeName === 'int' ||
+      typeName === 'unknown' ||
       typeName === 'string' ||
       typeName === 'void'
     );
@@ -1183,7 +1489,9 @@ export class CGenerator {
             (statement.elseBranch?.kind === 'IfStatement' && statementMutatesThis(statement.elseBranch))
           );
         case 'ReturnStatement':
-          return statement.expression !== null && expressionMutatesThis(statement.expression);
+          return statement.values.some(expressionMutatesThis);
+        case 'MultiVariableDeclaration':
+          return expressionMutatesThis(statement.initializer);
         case 'VariableDeclaration':
           return expressionMutatesThis(statement.initializer);
         case 'WhileStatement':
@@ -1452,6 +1760,82 @@ export class CGenerator {
     throw new CGeneratorError('Only named calls are supported.', expression.callee.location);
   }
 
+  private resolveCallResultCType(expression: CallExpressionNode): string {
+    if (expression.callee.kind === 'IdentifierExpression') {
+      const functionEntry: FunctionCodegenEntry | undefined = this.functions.get(expression.callee.name);
+
+      if (functionEntry !== undefined) {
+        return this.generateCallableCType(null, functionEntry.declaration);
+      }
+    }
+
+    if (expression.callee.kind === 'MemberExpression') {
+      const classReferenceName: string | null = this.resolveClassReferenceName(expression.callee.object);
+
+      if (classReferenceName !== null) {
+        const classEntry: ClassCodegenEntry = this.classes.get(classReferenceName)!;
+        const methodEntry: ClassMethodCodegenEntry | undefined = classEntry.methods.get(
+          expression.callee.property.name
+        );
+
+        if (methodEntry !== undefined) {
+          return this.generateCallableCType(classReferenceName, methodEntry.declaration);
+        }
+      }
+
+      const objectType: TypeNode = this.resolveExpressionType(expression.callee.object);
+      const classTypeName: string = this.resolveClassTypeName(objectType);
+      const classEntry: ClassCodegenEntry = this.classes.get(classTypeName)!;
+      const methodEntry: ClassMethodCodegenEntry | undefined = classEntry.methods.get(expression.callee.property.name);
+
+      if (methodEntry !== undefined) {
+        return this.generateCallableCType(classTypeName, methodEntry.declaration);
+      }
+    }
+
+    throw new CGeneratorError('Only named calls are supported.', expression.callee.location);
+  }
+
+  private resolveThrowsReturnType(expression: CallExpressionNode): TypeNode | null {
+    if (expression.callee.kind === 'IdentifierExpression') {
+      const functionEntry: FunctionCodegenEntry | undefined = this.functions.get(expression.callee.name);
+
+      if (functionEntry !== undefined && functionEntry.declaration.throws.length > 0) {
+        return functionEntry.declaration.returnType;
+      }
+
+      return null;
+    }
+
+    if (expression.callee.kind === 'MemberExpression') {
+      const classReferenceName: string | null = this.resolveClassReferenceName(expression.callee.object);
+
+      if (classReferenceName !== null) {
+        const classEntry: ClassCodegenEntry = this.classes.get(classReferenceName)!;
+        const methodEntry: ClassMethodCodegenEntry | undefined = classEntry.methods.get(
+          expression.callee.property.name
+        );
+
+        if (methodEntry !== undefined && methodEntry.declaration.throws.length > 0) {
+          return methodEntry.declaration.returnType;
+        }
+
+        return null;
+      }
+
+      const objectType: TypeNode = this.resolveExpressionType(expression.callee.object);
+      const classTypeName: string = this.resolveClassTypeName(objectType);
+      const classEntry: ClassCodegenEntry = this.classes.get(classTypeName)!;
+      const methodEntry: ClassMethodCodegenEntry | undefined = classEntry.methods.get(expression.callee.property.name);
+
+      if (methodEntry !== undefined && methodEntry.declaration.throws.length > 0) {
+        return methodEntry.declaration.returnType;
+      }
+    }
+
+    return null;
+  }
+
   private resolveNonNullableTypeNode(expression: ExpressionNode): TypeNode {
     const typeNode: TypeNode = this.resolveExpressionType(expression);
 
@@ -1526,6 +1910,14 @@ export class CGenerator {
     }
 
     return type.name === BUILTIN_ERROR_CLASS_NAME;
+  }
+
+  private typeUsesUnknown(type: TypeNode): boolean {
+    if (type.kind === 'NullableType') {
+      return type.type.name === 'unknown';
+    }
+
+    return type.name === 'unknown';
   }
 
   private usesStringEquality(program: ProgramNode): boolean {
@@ -1634,7 +2026,17 @@ export class CGenerator {
         }
 
         if (statement.kind === 'ReturnStatement') {
-          return statement.expression !== null && this.expressionUsesStringEquality(statement.expression);
+          return statement.values.some((value: ExpressionNode): boolean => this.expressionUsesStringEquality(value));
+        }
+
+        if (statement.kind === 'MultiVariableDeclaration') {
+          const declarationUsesStringEquality: boolean = this.expressionUsesStringEquality(statement.initializer);
+
+          for (const binding of statement.bindings) {
+            this.peekScope().set(binding.name.name, binding.type);
+          }
+
+          return declarationUsesStringEquality;
         }
 
         const declarationUsesStringEquality: boolean = this.expressionUsesStringEquality(statement.initializer);
@@ -1716,6 +2118,10 @@ export class CGenerator {
 
         if (statement.kind === 'VariableDeclaration') {
           return this.typeUsesString(statement.type);
+        }
+
+        if (statement.kind === 'MultiVariableDeclaration') {
+          return statement.bindings.some((binding): boolean => this.typeUsesString(binding.type));
         }
 
         if (statement.kind === 'WhileStatement') {
@@ -1825,7 +2231,12 @@ export class CGenerator {
             (statement.elseBranch?.kind === 'IfStatement' && statementUsesBuiltinError(statement.elseBranch))
           );
         case 'ReturnStatement':
-          return statement.expression !== null && expressionUsesBuiltinError(statement.expression);
+          return statement.values.some((value: ExpressionNode): boolean => expressionUsesBuiltinError(value));
+        case 'MultiVariableDeclaration':
+          return (
+            statement.bindings.some((binding): boolean => this.typeUsesBuiltinError(binding.type)) ||
+            expressionUsesBuiltinError(statement.initializer)
+          );
         case 'VariableDeclaration':
           return this.typeUsesBuiltinError(statement.type) || expressionUsesBuiltinError(statement.initializer);
         case 'WhileStatement':
@@ -1844,6 +2255,7 @@ export class CGenerator {
             member.parameters.some((parameter: FunctionParameterNode): boolean =>
               this.typeUsesBuiltinError(parameter.type)
             ) ||
+            member.throws.some((thrownType: TypeNode): boolean => this.typeUsesBuiltinError(thrownType)) ||
             (member.returnType !== null && this.typeUsesBuiltinError(member.returnType)) ||
             member.body.body.some(statementUsesBuiltinError)
           );
@@ -1853,10 +2265,79 @@ export class CGenerator {
       if (topLevel.kind === 'FunctionDeclaration') {
         return (
           this.typeUsesBuiltinError(topLevel.returnType) ||
+          topLevel.throws.some((thrownType: TypeNode): boolean => this.typeUsesBuiltinError(thrownType)) ||
           topLevel.parameters.some((parameter: FunctionParameterNode): boolean =>
             this.typeUsesBuiltinError(parameter.type)
           ) ||
           topLevel.body.body.some(statementUsesBuiltinError)
+        );
+      }
+
+      return false;
+    });
+  }
+
+  private usesUnknownType(program: ProgramNode): boolean {
+    const statementUsesUnknown = (statement: StatementNode): boolean => {
+      switch (statement.kind) {
+        case 'BlockStatement':
+          return statement.body.some(statementUsesUnknown);
+        case 'BreakStatement':
+        case 'ContinueStatement':
+          return false;
+        case 'DoWhileStatement':
+          return statement.body.body.some(statementUsesUnknown);
+        case 'ExpressionStatement':
+          return false;
+        case 'ForStatement':
+          return (
+            (statement.initializer.kind === 'VariableDeclaration' &&
+              this.typeUsesUnknown(statement.initializer.type)) ||
+            statement.body.body.some(statementUsesUnknown)
+          );
+        case 'IfStatement':
+          return (
+            statement.thenBranch.body.some(statementUsesUnknown) ||
+            (statement.elseBranch?.kind === 'BlockStatement' && statement.elseBranch.body.some(statementUsesUnknown)) ||
+            (statement.elseBranch?.kind === 'IfStatement' && statementUsesUnknown(statement.elseBranch))
+          );
+        case 'MultiVariableDeclaration':
+          return statement.bindings.some((binding): boolean => this.typeUsesUnknown(binding.type));
+        case 'ReturnStatement':
+          return false;
+        case 'VariableDeclaration':
+          return this.typeUsesUnknown(statement.type);
+        case 'WhileStatement':
+          return statement.body.body.some(statementUsesUnknown);
+      }
+    };
+
+    return program.body.some((topLevel: TopLevelNode): boolean => {
+      if (topLevel.kind === 'ClassDeclaration') {
+        return topLevel.members.some((member): boolean => {
+          if (member.kind === 'ClassFieldDeclaration') {
+            return this.typeUsesUnknown(member.type);
+          }
+
+          return (
+            member.throws.length > 1 ||
+            member.parameters.some((parameter: FunctionParameterNode): boolean =>
+              this.typeUsesUnknown(parameter.type)
+            ) ||
+            (member.returnType !== null && this.typeUsesUnknown(member.returnType)) ||
+            member.body.body.some(statementUsesUnknown)
+          );
+        });
+      }
+
+      if (topLevel.kind === 'FunctionDeclaration') {
+        return (
+          topLevel.throws.length > 1 ||
+          this.typeUsesUnknown(topLevel.returnType) ||
+          topLevel.parameters.some((parameter: FunctionParameterNode): boolean =>
+            this.typeUsesUnknown(parameter.type)
+          ) ||
+          topLevel.body.body.some(statementUsesUnknown)
         );
       }
 
@@ -1928,7 +2409,9 @@ export class CGenerator {
             (statement.elseBranch?.kind === 'IfStatement' && statementUsesIsInstance(statement.elseBranch))
           );
         case 'ReturnStatement':
-          return statement.expression !== null && expressionUsesIsInstance(statement.expression);
+          return statement.values.some((value: ExpressionNode): boolean => expressionUsesIsInstance(value));
+        case 'MultiVariableDeclaration':
+          return expressionUsesIsInstance(statement.initializer);
         case 'VariableDeclaration':
           return expressionUsesIsInstance(statement.initializer);
         case 'WhileStatement':

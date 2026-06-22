@@ -25,6 +25,7 @@ import type {
   IdentifierExpressionNode,
   IfStatementNode,
   MemberExpressionNode,
+  MultiVariableDeclarationNode,
   NamedTypeNode,
   NullableTypeNode,
   ProgramNode,
@@ -36,6 +37,7 @@ import type {
   ThisExpressionNode,
   UnaryExpressionNode,
   UnaryOperator,
+  VariableBindingNode,
   VariableDeclarationNode,
   WhileStatementNode,
 } from './ast/index.js';
@@ -492,6 +494,8 @@ export class Parser {
       returnType = this.parseType();
     }
 
+    const throws: TypeNode[] = this.parseThrowsClause();
+
     this.consume(TokenType.LeftBrace, 'Expected "{" after the method signature.');
 
     const body: BlockStatementNode = this.parseBlockStatement();
@@ -506,6 +510,7 @@ export class Parser {
       name,
       parameters,
       returnType,
+      throws,
     };
   }
 
@@ -725,6 +730,7 @@ export class Parser {
     this.consume(TokenType.Colon, 'Expected ":" after the parameters.');
 
     const returnType: TypeNode = this.parseType();
+    const throws: TypeNode[] = this.parseThrowsClause();
 
     this.consume(TokenType.LeftBrace, 'Expected "{" after the function signature.');
 
@@ -737,7 +743,22 @@ export class Parser {
       name,
       parameters,
       returnType,
+      throws,
     };
+  }
+
+  private parseThrowsClause(): TypeNode[] {
+    const throws: TypeNode[] = [];
+
+    if (!this.match(TokenType.Throws)) {
+      return throws;
+    }
+
+    do {
+      throws.push(this.parseType());
+    } while (this.match(TokenType.Comma));
+
+    return throws;
   }
 
   private parseIfStatement(keywordToken: Token): IfStatementNode {
@@ -974,19 +995,24 @@ export class Parser {
   private parseReturnStatement(keywordToken: Token): ReturnStatementNode {
     if (this.match(TokenType.Semicolon)) {
       return {
-        expression: null,
         kind: 'ReturnStatement',
         location: this.mergeLocations(keywordToken.location, this.previous().location),
+        values: [],
       };
     }
 
-    const expression: ExpressionNode = this.parseExpression();
+    const values: ExpressionNode[] = [this.parseExpression()];
+
+    while (this.match(TokenType.Comma)) {
+      values.push(this.parseExpression());
+    }
+
     const semicolonToken: Token = this.consume(TokenType.Semicolon, 'Expected ";" after the return value.');
 
     return {
-      expression,
       kind: 'ReturnStatement',
       location: this.mergeLocations(keywordToken.location, semicolonToken.location),
+      values,
     };
   }
 
@@ -1044,7 +1070,7 @@ export class Parser {
     }
 
     if (this.match(TokenType.Var, TokenType.Val)) {
-      return this.parseVariableDeclaration(this.previous());
+      return this.parseVariableDeclarationStatement(this.previous());
     }
 
     return this.parseExpressionStatement();
@@ -1080,6 +1106,23 @@ export class Parser {
     return nullableType;
   }
 
+  private parseVariableBinding(mutabilityToken: Token): VariableBindingNode {
+    const nameToken: Token = this.consume(TokenType.Identifier, 'Expected a variable name.');
+    const nameNode: IdentifierNode = this.createIdentifierNode(nameToken);
+
+    this.consume(TokenType.Colon, 'Expected ":" after the variable name.');
+
+    const typeNode: TypeNode = this.parseType();
+
+    return {
+      kind: 'VariableBinding',
+      location: this.mergeLocations(nameNode.location, typeNode.location),
+      mutability: mutabilityToken.type === TokenType.Var ? 'var' : 'val',
+      name: nameNode,
+      type: typeNode,
+    };
+  }
+
   private parseUnaryExpression(): ExpressionNode {
     if (this.match(TokenType.Bang, TokenType.Minus, TokenType.Plus, TokenType.Tilde)) {
       const operatorToken: Token = this.previous();
@@ -1113,12 +1156,7 @@ export class Parser {
   }
 
   private parseVariableDeclaration(mutabilityToken: Token): VariableDeclarationNode {
-    const nameToken: Token = this.consume(TokenType.Identifier, 'Expected a variable name.');
-    const nameNode: IdentifierNode = this.createIdentifierNode(nameToken);
-
-    this.consume(TokenType.Colon, 'Expected ":" after the variable name.');
-
-    const typeNode: TypeNode = this.parseType();
+    const binding: VariableBindingNode = this.parseVariableBinding(mutabilityToken);
 
     this.consume(TokenType.Equal, 'Expected "=" after the variable type.');
 
@@ -1128,10 +1166,53 @@ export class Parser {
     return {
       initializer: initializerNode,
       kind: 'VariableDeclaration',
-      location: this.mergeLocations(mutabilityToken.location, semicolonToken.location),
-      mutability: mutabilityToken.type === TokenType.Var ? 'var' : 'val',
-      name: nameNode,
-      type: typeNode,
+      location: this.mergeLocations(binding.location, semicolonToken.location),
+      mutability: binding.mutability,
+      name: binding.name,
+      type: binding.type,
+    };
+  }
+
+  private parseVariableDeclarationStatement(
+    mutabilityToken: Token
+  ): MultiVariableDeclarationNode | VariableDeclarationNode {
+    const firstBinding: VariableBindingNode = this.parseVariableBinding(mutabilityToken);
+
+    if (!this.match(TokenType.Comma)) {
+      this.consume(TokenType.Equal, 'Expected "=" after the variable type.');
+
+      const initializerNode: ExpressionNode = this.parseExpression();
+      const semicolonToken: Token = this.consume(TokenType.Semicolon, 'Expected ";" after the declaration.');
+
+      return {
+        initializer: initializerNode,
+        kind: 'VariableDeclaration',
+        location: this.mergeLocations(firstBinding.location, semicolonToken.location),
+        mutability: firstBinding.mutability,
+        name: firstBinding.name,
+        type: firstBinding.type,
+      };
+    }
+
+    const bindings: VariableBindingNode[] = [firstBinding];
+
+    do {
+      const nextMutabilityToken: Token = this.match(TokenType.Val, TokenType.Var)
+        ? this.previous()
+        : this.consume(TokenType.Val, 'Expected "val" or "var" before the variable name.');
+      bindings.push(this.parseVariableBinding(nextMutabilityToken));
+    } while (this.match(TokenType.Comma));
+
+    this.consume(TokenType.Equal, 'Expected "=" after the variable declarations.');
+
+    const initializerNode: ExpressionNode = this.parseExpression();
+    const semicolonToken: Token = this.consume(TokenType.Semicolon, 'Expected ";" after the declaration.');
+
+    return {
+      bindings,
+      initializer: initializerNode,
+      kind: 'MultiVariableDeclaration',
+      location: this.mergeLocations(firstBinding.location, semicolonToken.location),
     };
   }
 

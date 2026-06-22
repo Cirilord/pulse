@@ -10,4 +10,5 @@ export type FunctionDeclarationNode = BaseNode & {
   name: IdentifierNode;
   parameters: FunctionParameterNode[];
   returnType: TypeNode;
+  throws: TypeNode[];
 };

@@ -22,6 +22,7 @@ import type {
   IdentifierExpressionNode,
   IfStatementNode,
   MemberExpressionNode,
+  MultiVariableDeclarationNode,
   NamedTypeNode,
   ProgramNode,
   ReturnStatementNode,
@@ -29,6 +30,7 @@ import type {
   TopLevelNode,
   TypeNode,
   UnaryExpressionNode,
+  VariableBindingNode,
   VariableDeclarationNode,
   WhileStatementNode,
 } from '../parser/ast/index.js';
@@ -53,6 +55,7 @@ type FunctionEntry = {
   declaration: FunctionDeclarationNode;
   parameters: ResolvedParameter[];
   returnType: ResolvedType;
+  throws: ResolvedType[];
 };
 
 type ResolvedParameter = {
@@ -72,6 +75,7 @@ type ClassMethodEntry = {
   mutatesThis: boolean;
   parameters: ResolvedParameter[];
   returnType: ResolvedType | null;
+  throws: ResolvedType[];
 };
 
 type ClassEntry = {
@@ -101,6 +105,11 @@ type VariableAssignmentTarget = {
 
 type AssignmentTarget = FieldAssignmentTarget | VariableAssignmentTarget;
 
+type ThrowsCallInfo = {
+  returnType: ResolvedType;
+  throws: ResolvedType[];
+};
+
 export class CheckerError extends Error {
   public readonly location: TokenLocation;
 
@@ -118,6 +127,8 @@ export class Checker {
 
   private currentFunctionReturnType: ResolvedType | null;
 
+  private currentFunctionThrows: ResolvedType[];
+
   private currentMethod: ClassMethodEntry | null;
 
   private readonly functions: Map<string, FunctionEntry>;
@@ -130,6 +141,7 @@ export class Checker {
     this.classes = new Map<string, ClassEntry>();
     this.currentClass = null;
     this.currentFunctionReturnType = null;
+    this.currentFunctionThrows = [];
     this.currentMethod = null;
     this.functions = new Map<string, FunctionEntry>();
     this.loopDepth = 0;
@@ -140,6 +152,7 @@ export class Checker {
     this.classes.clear();
     this.currentClass = null;
     this.currentFunctionReturnType = null;
+    this.currentFunctionThrows = [];
     this.currentMethod = null;
     this.functions.clear();
     this.loopDepth = 0;
@@ -200,6 +213,15 @@ export class Checker {
     }
 
     const expressionType: ResolvedType = this.resolveExpressionType(expression);
+
+    if (
+      targetType.nullable &&
+      targetType.kind === expressionType.kind &&
+      targetType.name === expressionType.name &&
+      !expressionType.nullable
+    ) {
+      return;
+    }
 
     if (!this.isSameType(targetType, expressionType)) {
       throw new CheckerError(
@@ -316,10 +338,11 @@ export class Checker {
   private checkClassMethodDeclaration(methodEntry: ClassMethodEntry): void {
     const declaration: ClassMethodDeclarationNode = methodEntry.declaration;
     const previousFunctionReturnType: ResolvedType | null = this.currentFunctionReturnType;
+    const previousFunctionThrows: ResolvedType[] = this.currentFunctionThrows;
     const previousMethod: ClassMethodEntry | null = this.currentMethod;
 
     if (!declaration.isConstructor) {
-      if (declaration.body.body.length === 0 || declaration.body.body.at(-1)?.kind !== 'ReturnStatement') {
+      if (!this.statementListAlwaysReturns(declaration.body.body)) {
         throw new CheckerError(
           `Method "${declaration.name.name}" must end with an explicit return statement.`,
           declaration.body.location
@@ -329,6 +352,7 @@ export class Checker {
 
     this.pushScope();
     this.currentFunctionReturnType = methodEntry.returnType;
+    this.currentFunctionThrows = methodEntry.throws;
     this.currentMethod = methodEntry;
 
     try {
@@ -348,6 +372,7 @@ export class Checker {
       }
     } finally {
       this.currentFunctionReturnType = previousFunctionReturnType;
+      this.currentFunctionThrows = previousFunctionThrows;
       this.currentMethod = previousMethod;
       this.popScope();
     }
@@ -431,6 +456,76 @@ export class Checker {
     this.resolveExpressionType(statement.expression);
   }
 
+  private checkMultiVariableDeclaration(declaration: MultiVariableDeclarationNode): void {
+    const currentScope: Map<string, SymbolEntry> = this.peekScope();
+
+    for (const binding of declaration.bindings) {
+      if (currentScope.has(binding.name.name)) {
+        throw new CheckerError(`Variable "${binding.name.name}" is already declared.`, binding.name.location);
+      }
+    }
+
+    if (declaration.initializer.kind !== 'CallExpression') {
+      throw new CheckerError(
+        'Multiple variable declarations require a call to a throwing function or method.',
+        declaration.initializer.location
+      );
+    }
+
+    const throwsInfo: ThrowsCallInfo = this.resolveThrowsCallInfo(declaration.initializer);
+
+    if (throwsInfo.throws.length === 0) {
+      throw new CheckerError(
+        'Multiple variable declarations require a call to a function or method with "throws".',
+        declaration.initializer.location
+      );
+    }
+
+    if (
+      throwsInfo.returnType.kind === 'primitive' &&
+      throwsInfo.returnType.name === 'void' &&
+      !throwsInfo.returnType.nullable
+    ) {
+      throw new CheckerError(
+        'Void throwing calls return only an error and cannot be used in a multiple variable declaration.',
+        declaration.initializer.location
+      );
+    }
+
+    if (declaration.bindings.length !== 2) {
+      throw new CheckerError(
+        'Throwing calls with a return value require exactly two variable bindings.',
+        declaration.location
+      );
+    }
+
+    const valueBinding: VariableBindingNode = declaration.bindings[0]!;
+    const errorBinding: VariableBindingNode = declaration.bindings[1]!;
+    const valueType: ResolvedType = this.resolveType(valueBinding.type);
+
+    if (valueType.kind === 'primitive' && valueType.name === 'void') {
+      throw new CheckerError('Variables cannot use the void type.', valueBinding.type.location);
+    }
+
+    if (!this.isSameType(valueType, throwsInfo.returnType)) {
+      throw new CheckerError(
+        `Cannot assign "${this.stringifyType(throwsInfo.returnType)}" to "${this.stringifyType(valueType)}".`,
+        valueBinding.location
+      );
+    }
+
+    this.assertErrorBindingMatchesThrows(errorBinding.type, throwsInfo.throws);
+
+    currentScope.set(valueBinding.name.name, {
+      mutability: valueBinding.mutability,
+      type: valueType,
+    });
+    currentScope.set(errorBinding.name.name, {
+      mutability: errorBinding.mutability,
+      type: this.resolveType(errorBinding.type),
+    });
+  }
+
   private checkFieldAccessExpression(expression: MemberExpressionNode): ResolvedType {
     const instanceInfo: ClassReference | ResolvedType = this.resolveMemberObject(expression.object);
 
@@ -501,7 +596,7 @@ export class Checker {
   private checkFunctionDeclaration(statement: FunctionDeclarationNode): void {
     const functionEntry: FunctionEntry = this.functions.get(statement.name.name)!;
 
-    if (statement.body.body.length === 0 || statement.body.body.at(-1)?.kind !== 'ReturnStatement') {
+    if (!this.statementListAlwaysReturns(statement.body.body)) {
       throw new CheckerError(
         `Function "${statement.name.name}" must end with an explicit return statement.`,
         statement.body.location
@@ -510,9 +605,11 @@ export class Checker {
 
     this.pushScope();
     const previousFunctionReturnType: ResolvedType | null = this.currentFunctionReturnType;
+    const previousFunctionThrows: ResolvedType[] = this.currentFunctionThrows;
     const previousMethod: ClassMethodEntry | null = this.currentMethod;
     const previousClass: ClassEntry | null = this.currentClass;
     this.currentFunctionReturnType = functionEntry.returnType;
+    this.currentFunctionThrows = functionEntry.throws;
     this.currentMethod = null;
     this.currentClass = null;
 
@@ -533,6 +630,7 @@ export class Checker {
       }
     } finally {
       this.currentFunctionReturnType = previousFunctionReturnType;
+      this.currentFunctionThrows = previousFunctionThrows;
       this.currentMethod = previousMethod;
       this.currentClass = previousClass;
       this.popScope();
@@ -552,6 +650,14 @@ export class Checker {
         expression.location,
         `Function "${calleeName}"`
       );
+
+      if (functionEntry.throws.length > 0) {
+        throw new CheckerError(
+          `Function "${calleeName}" must be captured through its error return values.`,
+          expression.location
+        );
+      }
+
       return functionEntry.returnType;
     }
 
@@ -633,6 +739,13 @@ export class Checker {
         `Static method "${memberObject.classEntry.declaration.name.name}.${memberExpression.property.name}"`
       );
 
+      if (methodEntry.throws.length > 0) {
+        throw new CheckerError(
+          `Static method "${memberObject.classEntry.declaration.name.name}.${memberExpression.property.name}" must be captured through its error return values.`,
+          expression.location
+        );
+      }
+
       return methodEntry.returnType!;
     }
 
@@ -681,6 +794,13 @@ export class Checker {
       `Method "${classEntry.declaration.name.name}.${memberExpression.property.name}"`
     );
 
+    if (methodEntry.throws.length > 0) {
+      throw new CheckerError(
+        `Method "${classEntry.declaration.name.name}.${memberExpression.property.name}" must be captured through its error return values.`,
+        expression.location
+      );
+    }
+
     return methodEntry.returnType!;
   }
 
@@ -692,9 +812,9 @@ export class Checker {
     const instanceArgument: ExpressionNode = expression.arguments[0]!;
     const instanceType: ResolvedType = this.resolveExpressionType(instanceArgument);
 
-    if (instanceType.kind !== 'class') {
+    if (instanceType.kind !== 'class' && instanceType.kind !== 'unknown') {
       throw new CheckerError(
-        'Function "isInstance" expects a class instance as the first argument.',
+        'Function "isInstance" expects a class instance or unknown value as the first argument.',
         instanceArgument.location
       );
     }
@@ -716,6 +836,82 @@ export class Checker {
     };
   }
 
+  private resolveThrowsCallInfo(expression: CallExpressionNode): ThrowsCallInfo {
+    if (expression.callee.kind === 'IdentifierExpression') {
+      if (expression.callee.name === 'isInstance') {
+        return {
+          returnType: {
+            kind: 'primitive',
+            name: 'boolean',
+            nullable: false,
+          },
+          throws: [],
+        };
+      }
+
+      const functionEntry: FunctionEntry | undefined = this.functions.get(expression.callee.name);
+
+      if (functionEntry !== undefined) {
+        return {
+          returnType: functionEntry.returnType,
+          throws: functionEntry.throws,
+        };
+      }
+
+      if (this.classes.has(expression.callee.name)) {
+        return {
+          returnType: {
+            kind: 'class',
+            name: expression.callee.name,
+            nullable: false,
+          },
+          throws: [],
+        };
+      }
+
+      return {
+        returnType: this.checkIdentifierCallExpression(
+          expression as CallExpressionNode & { callee: IdentifierExpressionNode }
+        ),
+        throws: [],
+      };
+    }
+
+    if (expression.callee.kind === 'MemberExpression') {
+      const memberObject: ClassReference | ResolvedType = this.resolveMemberObject(expression.callee.object);
+
+      if (memberObject.kind === 'class_reference') {
+        const methodEntry: ClassMethodEntry | undefined = memberObject.classEntry.methods.get(
+          expression.callee.property.name
+        );
+
+        if (methodEntry !== undefined) {
+          return {
+            returnType: methodEntry.returnType!,
+            throws: methodEntry.throws,
+          };
+        }
+      }
+
+      if (memberObject.kind === 'class') {
+        const classEntry: ClassEntry = this.classes.get(memberObject.name)!;
+        const methodEntry: ClassMethodEntry | undefined = classEntry.methods.get(expression.callee.property.name);
+
+        if (methodEntry !== undefined) {
+          return {
+            returnType: methodEntry.returnType!,
+            throws: methodEntry.throws,
+          };
+        }
+      }
+    }
+
+    return {
+      returnType: this.resolveExpressionType(expression),
+      throws: [],
+    };
+  }
+
   private checkReturnStatement(statement: ReturnStatementNode): void {
     if (this.currentMethod?.declaration.isConstructor) {
       throw new CheckerError('Constructors cannot use return statements.', statement.location);
@@ -730,18 +926,40 @@ export class Checker {
       this.currentFunctionReturnType.name === 'void' &&
       !this.currentFunctionReturnType.nullable
     ) {
-      if (statement.expression !== null) {
-        throw new CheckerError('Void functions must use "return;" without a value.', statement.location);
+      if (this.currentFunctionThrows.length === 0) {
+        if (statement.values.length !== 0) {
+          throw new CheckerError('Void functions must use "return;" without a value.', statement.location);
+        }
+
+        return;
       }
 
+      if (statement.values.length !== 1) {
+        throw new CheckerError('Void throwing functions must return exactly one error value.', statement.location);
+      }
+
+      this.assertThrowValueAssignable(this.currentFunctionThrows, statement.values[0]!);
       return;
     }
 
-    if (statement.expression === null) {
-      throw new CheckerError('Non-void functions must return a value.', statement.location);
+    if (this.currentFunctionThrows.length === 0) {
+      if (statement.values.length !== 1) {
+        throw new CheckerError('Non-void functions must return a value.', statement.location);
+      }
+
+      this.assertExpressionAssignable(this.currentFunctionReturnType, statement.values[0]!);
+      return;
     }
 
-    this.assertExpressionAssignable(this.currentFunctionReturnType, statement.expression);
+    if (statement.values.length !== 2) {
+      throw new CheckerError(
+        'Throwing functions with a return value must return exactly two values.',
+        statement.location
+      );
+    }
+
+    this.assertExpressionAssignable(this.currentFunctionReturnType, statement.values[0]!);
+    this.assertThrowValueAssignable(this.currentFunctionThrows, statement.values[1]!);
   }
 
   private checkStatement(statement: StatementNode): void {
@@ -766,6 +984,9 @@ export class Checker {
         return;
       case 'IfStatement':
         this.checkIfStatement(statement);
+        return;
+      case 'MultiVariableDeclaration':
+        this.checkMultiVariableDeclaration(statement);
         return;
       case 'ReturnStatement':
         this.checkReturnStatement(statement);
@@ -894,6 +1115,39 @@ export class Checker {
       throw new CheckerError('Variables cannot use the void type.', declaration.type.location);
     }
 
+    if (declaredType.kind === 'unknown') {
+      throw new CheckerError(
+        'The "unknown" type is only allowed for error bindings from throwing calls.',
+        declaration.type.location
+      );
+    }
+
+    if (declaration.initializer.kind === 'CallExpression') {
+      const throwsInfo: ThrowsCallInfo = this.resolveThrowsCallInfo(declaration.initializer);
+
+      if (throwsInfo.throws.length > 0) {
+        if (
+          throwsInfo.returnType.kind !== 'primitive' ||
+          throwsInfo.returnType.name !== 'void' ||
+          throwsInfo.returnType.nullable
+        ) {
+          throw new CheckerError(
+            'Throwing calls with a return value require multiple variable declarations.',
+            declaration.initializer.location
+          );
+        }
+
+        this.assertErrorBindingMatchesThrows(declaration.type, throwsInfo.throws);
+
+        currentScope.set(declaration.name.name, {
+          mutability: declaration.mutability,
+          type: declaredType,
+        });
+
+        return;
+      }
+    }
+
     this.assertExpressionAssignable(declaredType, declaration.initializer);
 
     currentScope.set(declaration.name.name, {
@@ -941,8 +1195,8 @@ export class Checker {
 
         const fieldType: ResolvedType = this.resolveType(member.type);
 
-        if (fieldType.kind === 'primitive' && fieldType.name === 'void') {
-          throw new CheckerError('Fields cannot use the void type.', member.type.location);
+        if ((fieldType.kind === 'primitive' && fieldType.name === 'void') || fieldType.kind === 'unknown') {
+          throw new CheckerError('Fields cannot use the void or unknown types.', member.type.location);
         }
 
         fields.set(member.name.name, {
@@ -959,11 +1213,16 @@ export class Checker {
         mutatesThis: this.methodMutatesThis(member),
         parameters: this.resolveParameters(member.parameters, 'Method'),
         returnType: member.returnType === null ? null : this.resolveType(member.returnType),
+        throws: this.resolveThrowsTypes(member.throws, member.location),
       };
 
       if (member.isConstructor) {
         if (member.isStatic) {
           throw new CheckerError('Constructors cannot be static.', member.location);
+        }
+
+        if (member.throws.length > 0) {
+          throw new CheckerError('Constructors cannot declare thrown types yet.', member.location);
         }
 
         if (constructorMethod !== null) {
@@ -986,6 +1245,10 @@ export class Checker {
         throw new CheckerError('Methods cannot return "void?".', member.returnType!.location);
       }
 
+      if (methodEntry.returnType?.kind === 'unknown') {
+        throw new CheckerError('Methods cannot return the unknown type.', member.returnType!.location);
+      }
+
       methods.set(member.name.name, methodEntry);
     }
 
@@ -1003,11 +1266,17 @@ export class Checker {
     }
 
     const parameters: ResolvedParameter[] = this.resolveParameters(statement.parameters, 'Function');
+    const returnType: ResolvedType = this.resolveType(statement.returnType);
+
+    if (returnType.kind === 'unknown') {
+      throw new CheckerError('Functions cannot return the unknown type.', statement.returnType.location);
+    }
 
     this.functions.set(statement.name.name, {
       declaration: statement,
       parameters,
-      returnType: this.resolveType(statement.returnType),
+      returnType,
+      throws: this.resolveThrowsTypes(statement.throws, statement.location),
     });
   }
 
@@ -1101,8 +1370,10 @@ export class Checker {
             (statement.elseBranch?.kind === 'IfStatement' && statementMutatesThis(statement.elseBranch))
           );
         case 'ReturnStatement':
-          return statement.expression !== null && expressionMutatesThis(statement.expression);
+          return statement.values.some(expressionMutatesThis);
         case 'VariableDeclaration':
+          return expressionMutatesThis(statement.initializer);
+        case 'MultiVariableDeclaration':
           return expressionMutatesThis(statement.initializer);
         case 'WhileStatement':
           return expressionMutatesThis(statement.condition) || statement.body.body.some(statementMutatesThis);
@@ -1238,7 +1509,10 @@ export class Checker {
     }
 
     if (leftType.kind !== 'primitive') {
-      throw new CheckerError(`Operator "${expression.operator}" does not support class values.`, expression.location);
+      throw new CheckerError(
+        `Operator "${expression.operator}" does not support class or unknown values.`,
+        expression.location
+      );
     }
 
     if (this.isBitwiseBinaryOperator(expression.operator)) {
@@ -1305,6 +1579,10 @@ export class Checker {
 
     if (leftType.kind === 'class' || rightType.kind === 'class') {
       throw new CheckerError('Equality is not supported for class values yet.', expression.location);
+    }
+
+    if (leftType.kind === 'unknown' || rightType.kind === 'unknown') {
+      throw new CheckerError('Equality is not supported for unknown values except against null.', expression.location);
     }
 
     if (!this.isSameType(leftType, rightType)) {
@@ -1385,7 +1663,38 @@ export class Checker {
     return this.resolveExpressionType(expression);
   }
 
+  private resolveThrowsTypes(types: TypeNode[], location: TokenLocation): ResolvedType[] {
+    const resolvedThrows: ResolvedType[] = types.map((type: TypeNode): ResolvedType => {
+      const resolvedType: ResolvedType = this.resolveType(type);
+
+      if (resolvedType.nullable || resolvedType.kind !== 'class') {
+        throw new CheckerError('Thrown types must be non-nullable class types.', type.location);
+      }
+
+      return resolvedType;
+    });
+    const thrownTypeNames: Set<string> = new Set<string>();
+
+    for (const resolvedThrow of resolvedThrows) {
+      if (thrownTypeNames.has(resolvedThrow.name)) {
+        throw new CheckerError(`Thrown type "${resolvedThrow.name}" is already declared.`, location);
+      }
+
+      thrownTypeNames.add(resolvedThrow.name);
+    }
+
+    return resolvedThrows;
+  }
+
   private resolveNamedType(type: NamedTypeNode): ResolvedType {
+    if (type.name === 'unknown') {
+      return {
+        kind: 'unknown',
+        name: 'unknown',
+        nullable: false,
+      };
+    }
+
     if (PRIMITIVE_TYPES.has(type.name)) {
       return {
         kind: 'primitive',
@@ -1450,8 +1759,11 @@ export class Checker {
     const resolvedParameters: ResolvedParameter[] = parameters.map((parameter: FunctionParameterNode) => {
       const type: ResolvedType = this.resolveType(parameter.type);
 
-      if (type.kind === 'primitive' && type.name === 'void') {
-        throw new CheckerError(`${ownerLabel} parameters cannot use the void type.`, parameter.type.location);
+      if ((type.kind === 'primitive' && type.name === 'void') || type.kind === 'unknown') {
+        throw new CheckerError(
+          `${ownerLabel} parameters cannot use the void or unknown types.`,
+          parameter.type.location
+        );
       }
 
       return {
@@ -1478,6 +1790,101 @@ export class Checker {
     }
 
     return resolvedParameters;
+  }
+
+  private assertErrorBindingMatchesThrows(type: TypeNode, throwsTypes: ResolvedType[]): void {
+    const resolvedType: ResolvedType = this.resolveType(type);
+
+    if (!resolvedType.nullable) {
+      throw new CheckerError('Error bindings for throwing calls must be nullable.', type.location);
+    }
+
+    if (throwsTypes.length === 1) {
+      const expectedType: ResolvedType = {
+        ...throwsTypes[0]!,
+        nullable: true,
+      };
+
+      if (!this.isSameType(resolvedType, expectedType)) {
+        throw new CheckerError(
+          `Error bindings for a single thrown type must use "${this.stringifyType(expectedType)}".`,
+          type.location
+        );
+      }
+
+      return;
+    }
+
+    if (resolvedType.kind !== 'unknown') {
+      throw new CheckerError('Error bindings for multiple thrown types must use "unknown?".', type.location);
+    }
+  }
+
+  private assertThrowValueAssignable(throwsTypes: ResolvedType[], expression: ExpressionNode): void {
+    if (expression.kind === 'NullLiteral') {
+      return;
+    }
+
+    const expressionType: ResolvedType = this.resolveExpressionType(expression);
+
+    if (expressionType.nullable) {
+      throw new CheckerError('Thrown values cannot be nullable.', expression.location);
+    }
+
+    const isAllowedType: boolean = throwsTypes.some((throwsType: ResolvedType): boolean =>
+      this.isSameType(expressionType, throwsType)
+    );
+
+    if (!isAllowedType) {
+      throw new CheckerError(
+        `Cannot return "${this.stringifyType(expressionType)}" as one of "${throwsTypes.map((type): string => this.stringifyType(type)).join(', ')}".`,
+        expression.location
+      );
+    }
+  }
+
+  private statementAlwaysReturns(statement: StatementNode): boolean {
+    switch (statement.kind) {
+      case 'BlockStatement':
+        return this.statementListAlwaysReturns(statement.body);
+      case 'IfStatement':
+        if (statement.elseBranch === null) {
+          return false;
+        }
+
+        if (statement.elseBranch.kind === 'BlockStatement') {
+          return (
+            this.statementListAlwaysReturns(statement.thenBranch.body) &&
+            this.statementListAlwaysReturns(statement.elseBranch.body)
+          );
+        }
+
+        return (
+          this.statementListAlwaysReturns(statement.thenBranch.body) &&
+          this.statementAlwaysReturns(statement.elseBranch)
+        );
+      case 'ReturnStatement':
+        return true;
+      case 'BreakStatement':
+      case 'ContinueStatement':
+      case 'DoWhileStatement':
+      case 'ExpressionStatement':
+      case 'ForStatement':
+      case 'MultiVariableDeclaration':
+      case 'VariableDeclaration':
+      case 'WhileStatement':
+        return false;
+    }
+  }
+
+  private statementListAlwaysReturns(statements: StatementNode[]): boolean {
+    for (const statement of statements) {
+      if (this.statementAlwaysReturns(statement)) {
+        return true;
+      }
+    }
+
+    return false;
   }
 
   private resolveThisExpressionType(location: TokenLocation): ResolvedType {

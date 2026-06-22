@@ -14,4 +14,5 @@ export type ClassMethodDeclarationNode = BaseNode & {
   name: IdentifierNode;
   parameters: FunctionParameterNode[];
   returnType: TypeNode | null;
+  throws: TypeNode[];
 };

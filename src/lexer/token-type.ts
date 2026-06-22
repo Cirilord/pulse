@@ -61,6 +61,7 @@ export enum TokenType {
   Static = 'Static',
   StringLiteral = 'StringLiteral',
   This = 'This',
+  Throws = 'Throws',
   Tilde = 'Tilde',
   True = 'True',
   Val = 'Val',

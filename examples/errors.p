@@ -1,13 +1,46 @@
-fn buildError(): Error {
-  return Error("Invalid age");
+class ParseError {
+  public val message: string;
+
+  public fn constructor(val message: string) {
+    this.message = message;
+  }
+}
+
+class IoError {
+  public val message: string;
+
+  public fn constructor(val message: string) {
+    this.message = message;
+  }
+}
+
+fn parse(val text: string): int? throws ParseError, IoError {
+  if (text == "") {
+    return null, ParseError("Empty text");
+  }
+
+  return 10, null;
+}
+
+fn save(val text: string): void throws IoError {
+  if (text == "") {
+    return IoError("Empty text");
+  }
+
+  return null;
 }
 
 fn main(): int {
-  val error: Error = buildError();
+  val value: int?, val err: unknown? = parse("");
+  val saveErr: IoError? = save("ok");
 
-  if (error.message == "Invalid age") {
+  if (saveErr != null) {
+    return 2;
+  }
+
+  if (err != null && isInstance(err, ParseError)) {
     return 1;
   }
 
-  return 0;
+  return value ?? 0;
 }
