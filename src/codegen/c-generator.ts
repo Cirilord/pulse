@@ -47,6 +47,16 @@ type ClassCodegenEntry = {
   methods: Map<string, ClassMethodCodegenEntry>;
 };
 
+type ConditionNarrowing = {
+  name: string;
+  type: TypeNode;
+};
+
+type ScopeEntry = {
+  declaredType: TypeNode;
+  type: TypeNode;
+};
+
 export class CGeneratorError extends Error {
   public readonly location: TokenLocation;
 
@@ -68,7 +78,7 @@ export class CGenerator {
 
   private readonly functions: Map<string, FunctionCodegenEntry>;
 
-  private readonly scopes: Map<string, TypeNode>[];
+  private readonly scopes: Map<string, ScopeEntry>[];
 
   private temporaryCounter: number;
 
@@ -673,7 +683,10 @@ export class CGenerator {
     this.currentMethod = methodEntry;
 
     for (const parameter of methodEntry.declaration.parameters) {
-      this.peekScope().set(parameter.name.name, parameter.type);
+      this.peekScope().set(parameter.name.name, {
+        declaredType: parameter.type,
+        type: parameter.type,
+      });
     }
 
     const lines: string[] = [this.generateClassMethodPrototype(classEntry, methodEntry).replace(/;$/u, ' {')];
@@ -940,6 +953,28 @@ export class CGenerator {
     const objectExpression: string = this.generateExpression(expression.object);
 
     if (expression.object.kind === 'IdentifierExpression') {
+      const entry: ScopeEntry = this.resolveVariableEntry(expression.object.name);
+      const declaredType: TypeNode = entry.declaredType;
+      const effectiveType: TypeNode = entry.type;
+
+      if (
+        declaredType.kind === 'NullableType' &&
+        declaredType.type.name === 'unknown' &&
+        effectiveType.kind === 'NamedType' &&
+        !this.isPrimitiveTypeName(effectiveType.name)
+      ) {
+        return `${objectExpression}.value.value.${effectiveType.name}_value.${expression.property.name}`;
+      }
+
+      if (
+        declaredType.kind === 'NamedType' &&
+        declaredType.name === 'unknown' &&
+        effectiveType.kind === 'NamedType' &&
+        !this.isPrimitiveTypeName(effectiveType.name)
+      ) {
+        return `${objectExpression}.value.${effectiveType.name}_value.${expression.property.name}`;
+      }
+
       return `${objectExpression}.${expression.property.name}`;
     }
 
@@ -1018,7 +1053,10 @@ export class CGenerator {
     this.currentClass = null;
 
     for (const parameter of statement.parameters) {
-      this.peekScope().set(parameter.name.name, parameter.type);
+      this.peekScope().set(parameter.name.name, {
+        declaredType: parameter.type,
+        type: parameter.type,
+      });
     }
 
     const lines: string[] = [this.generateFunctionPrototype(statement).replace(/;$/u, ' {')];
@@ -1051,7 +1089,12 @@ export class CGenerator {
 
   private generateIfStatement(statement: IfStatementNode, indentLevel: number, isElseIf: boolean = false): string[] {
     const openingLine: string = `${this.indent(indentLevel)}${isElseIf ? 'else if' : 'if'} (${this.generateExpression(statement.condition)}) {`;
-    const lines: string[] = this.generateScopedBlock(statement.thenBranch.body, indentLevel, openingLine);
+    const lines: string[] = this.generateScopedBlock(
+      statement.thenBranch.body,
+      indentLevel,
+      openingLine,
+      this.resolveConditionNarrowings(statement.condition)
+    );
 
     if (statement.elseBranch === null) {
       return lines;
@@ -1228,10 +1271,23 @@ export class CGenerator {
     ];
   }
 
-  private generateScopedBlock(statements: StatementNode[], indentLevel: number, openingLine: string): string[] {
+  private generateScopedBlock(
+    statements: StatementNode[],
+    indentLevel: number,
+    openingLine: string,
+    narrowings: ConditionNarrowing[] = []
+  ): string[] {
     const lines: string[] = [openingLine];
 
     this.pushScope();
+
+    for (const narrowing of narrowings) {
+      const currentEntry: ScopeEntry = this.resolveVariableEntry(narrowing.name);
+      this.peekScope().set(narrowing.name, {
+        declaredType: currentEntry.declaredType,
+        type: narrowing.type,
+      });
+    }
 
     for (const statement of statements) {
       lines.push(...this.generateStatement(statement, indentLevel + 1));
@@ -1302,7 +1358,10 @@ export class CGenerator {
       }
     }
 
-    this.peekScope().set(declaration.name.name, declaration.type);
+    this.peekScope().set(declaration.name.name, {
+      declaredType: declaration.type,
+      type: declaration.type,
+    });
 
     return `${cType} ${declaration.name.name} = ${initializer};`;
   }
@@ -1333,8 +1392,14 @@ export class CGenerator {
     const valueType: string = this.generateType(valueBinding.type, valueBinding.mutability);
     const errorType: string = this.generateType(errorBinding.type, errorBinding.mutability);
 
-    this.peekScope().set(valueBinding.name.name, valueBinding.type);
-    this.peekScope().set(errorBinding.name.name, errorBinding.type);
+    this.peekScope().set(valueBinding.name.name, {
+      declaredType: valueBinding.type,
+      type: valueBinding.type,
+    });
+    this.peekScope().set(errorBinding.name.name, {
+      declaredType: errorBinding.type,
+      type: errorBinding.type,
+    });
 
     lines.push(`${this.indent(indentLevel)}${valueType} ${valueBinding.name.name} = ${resultVariableName}.value;`);
     lines.push(`${this.indent(indentLevel)}${errorType} ${errorBinding.name.name} = ${resultVariableName}.error;`);
@@ -1553,8 +1618,8 @@ export class CGenerator {
     return method.body.body.some(statementMutatesThis);
   }
 
-  private peekScope(): Map<string, TypeNode> {
-    const scope: Map<string, TypeNode> | undefined = this.scopes.at(-1);
+  private peekScope(): Map<string, ScopeEntry> {
+    const scope: Map<string, ScopeEntry> | undefined = this.scopes.at(-1);
 
     if (scope === undefined) {
       throw new Error('C generator requires at least one active scope.');
@@ -1564,7 +1629,7 @@ export class CGenerator {
   }
 
   private popScope(): void {
-    const scope: Map<string, TypeNode> | undefined = this.scopes.pop();
+    const scope: Map<string, ScopeEntry> | undefined = this.scopes.pop();
 
     if (scope === undefined) {
       throw new Error('C generator cannot pop an empty scope stack.');
@@ -1572,7 +1637,99 @@ export class CGenerator {
   }
 
   private pushScope(): void {
-    this.scopes.push(new Map<string, TypeNode>());
+    this.scopes.push(new Map<string, ScopeEntry>());
+  }
+
+  private resolveConditionNarrowings(expression: ExpressionNode): ConditionNarrowing[] {
+    switch (expression.kind) {
+      case 'BinaryExpression':
+        if (expression.operator === '&&') {
+          return [
+            ...this.resolveConditionNarrowings(expression.left),
+            ...this.resolveConditionNarrowings(expression.right),
+          ];
+        }
+
+        return this.resolveNullCheckNarrowings(expression);
+      case 'CallExpression':
+        return this.resolveIsInstanceNarrowings(expression);
+      case 'GroupingExpression':
+        return this.resolveConditionNarrowings(expression.expression);
+      default:
+        return [];
+    }
+  }
+
+  private resolveIsInstanceNarrowings(expression: CallExpressionNode): ConditionNarrowing[] {
+    if (
+      expression.callee.kind !== 'IdentifierExpression' ||
+      expression.callee.name !== 'isInstance' ||
+      expression.arguments.length !== 2
+    ) {
+      return [];
+    }
+
+    const instanceArgument: ExpressionNode = expression.arguments[0]!;
+    const targetArgument: ExpressionNode = expression.arguments[1]!;
+
+    if (instanceArgument.kind !== 'IdentifierExpression') {
+      return [];
+    }
+
+    const targetClassName: string | null = this.resolveClassReferenceName(targetArgument);
+
+    if (targetClassName === null) {
+      return [];
+    }
+
+    return [
+      {
+        name: instanceArgument.name,
+        type: {
+          kind: 'NamedType',
+          location: instanceArgument.location,
+          name: targetClassName,
+        },
+      },
+    ];
+  }
+
+  private resolveNullCheckNarrowings(expression: BinaryExpressionNode): ConditionNarrowing[] {
+    if (expression.operator !== '!=') {
+      return [];
+    }
+
+    let identifier: string | null = null;
+    let identifierLocation: TokenLocation | null = null;
+
+    if (expression.left.kind === 'IdentifierExpression' && expression.right.kind === 'NullLiteral') {
+      identifier = expression.left.name;
+      identifierLocation = expression.left.location;
+    } else if (expression.right.kind === 'IdentifierExpression' && expression.left.kind === 'NullLiteral') {
+      identifier = expression.right.name;
+      identifierLocation = expression.right.location;
+    }
+
+    if (identifier === null || identifierLocation === null) {
+      return [];
+    }
+
+    const currentType: TypeNode = this.resolveVariableType(identifier);
+
+    if (currentType.kind !== 'NullableType') {
+      return [];
+    }
+
+    return [
+      {
+        name: identifier,
+        type: {
+          kind: 'NamedType',
+          location: identifierLocation,
+          name: currentType.type.name,
+        },
+      },
+    ];
   }
 
   private resolveAssignmentTargetType(target: AssignmentExpressionNode['target']): TypeNode {
@@ -1709,10 +1866,10 @@ export class CGenerator {
 
   private resolveIdentifierOrClassType(expression: ExpressionNode & { kind: 'IdentifierExpression' }): TypeNode {
     for (let index = this.scopes.length - 1; index >= 0; index -= 1) {
-      const typeNode: TypeNode | undefined = this.scopes[index]?.get(expression.name);
+      const entry: ScopeEntry | undefined = this.scopes[index]?.get(expression.name);
 
-      if (typeNode !== undefined) {
-        return typeNode;
+      if (entry !== undefined) {
+        return entry.type;
       }
     }
 
@@ -1884,11 +2041,15 @@ export class CGenerator {
   }
 
   private resolveVariableType(name: string): TypeNode {
-    for (let index = this.scopes.length - 1; index >= 0; index -= 1) {
-      const typeNode: TypeNode | undefined = this.scopes[index]?.get(name);
+    return this.resolveVariableEntry(name).type;
+  }
 
-      if (typeNode !== undefined) {
-        return typeNode;
+  private resolveVariableEntry(name: string): ScopeEntry {
+    for (let index = this.scopes.length - 1; index >= 0; index -= 1) {
+      const entry: ScopeEntry | undefined = this.scopes[index]?.get(name);
+
+      if (entry !== undefined) {
+        return entry;
       }
     }
 
@@ -1996,7 +2157,10 @@ export class CGenerator {
             const initializerUsesStringEquality: boolean = this.expressionUsesStringEquality(
               statement.initializer.initializer
             );
-            this.peekScope().set(statement.initializer.name.name, statement.initializer.type);
+            this.peekScope().set(statement.initializer.name.name, {
+              declaredType: statement.initializer.type,
+              type: statement.initializer.type,
+            });
             const conditionUsesStringEquality: boolean = this.expressionUsesStringEquality(statement.condition);
             const updateUsesStringEquality: boolean = this.expressionUsesStringEquality(statement.update);
             const bodyUsesStringEquality: boolean = usesStringEqualityInStatements(statement.body.body);
@@ -2052,14 +2216,20 @@ export class CGenerator {
           const declarationUsesStringEquality: boolean = this.expressionUsesStringEquality(statement.initializer);
 
           for (const binding of statement.bindings) {
-            this.peekScope().set(binding.name.name, binding.type);
+            this.peekScope().set(binding.name.name, {
+              declaredType: binding.type,
+              type: binding.type,
+            });
           }
 
           return declarationUsesStringEquality;
         }
 
         const declarationUsesStringEquality: boolean = this.expressionUsesStringEquality(statement.initializer);
-        this.peekScope().set(statement.name.name, statement.type);
+        this.peekScope().set(statement.name.name, {
+          declaredType: statement.type,
+          type: statement.type,
+        });
 
         if (declarationUsesStringEquality) {
           return true;
@@ -2081,7 +2251,10 @@ export class CGenerator {
           this.pushScope();
 
           for (const parameter of member.parameters) {
-            this.peekScope().set(parameter.name.name, parameter.type);
+            this.peekScope().set(parameter.name.name, {
+              declaredType: parameter.type,
+              type: parameter.type,
+            });
           }
 
           const bodyUsesStringEquality: boolean = usesStringEqualityInStatements(member.body.body);
@@ -2095,7 +2268,10 @@ export class CGenerator {
         this.pushScope();
 
         for (const parameter of topLevel.parameters) {
-          this.peekScope().set(parameter.name.name, parameter.type);
+          this.peekScope().set(parameter.name.name, {
+            declaredType: parameter.type,
+            type: parameter.type,
+          });
         }
 
         const bodyUsesStringEquality: boolean = usesStringEqualityInStatements(topLevel.body.body);

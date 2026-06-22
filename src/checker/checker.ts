@@ -47,6 +47,7 @@ const PRIMITIVE_TYPES: ReadonlySet<string> = new Set<PrimitiveTypeName>([
 ]);
 
 type SymbolEntry = {
+  declaredType: ResolvedType;
   mutability: 'val' | 'var';
   type: ResolvedType;
 };
@@ -108,6 +109,11 @@ type AssignmentTarget = FieldAssignmentTarget | VariableAssignmentTarget;
 type ThrowsCallInfo = {
   returnType: ResolvedType;
   throws: ResolvedType[];
+};
+
+type ConditionNarrowing = {
+  name: string;
+  type: ResolvedType;
 };
 
 export class CheckerError extends Error {
@@ -246,7 +252,7 @@ export class Checker {
         );
       }
 
-      return this.checkVariableAssignmentExpression(expression, assignmentTarget.symbol.type);
+      return this.checkVariableAssignmentExpression(expression, assignmentTarget.symbol.declaredType);
     }
 
     const { fieldEntry, target } = assignmentTarget;
@@ -279,8 +285,22 @@ export class Checker {
     return this.checkVariableAssignmentExpression(expression, fieldEntry.type);
   }
 
-  private checkBlockStatement(statement: BlockStatementNode): void {
+  private checkBlockStatement(statement: BlockStatementNode, narrowings: ConditionNarrowing[] = []): void {
     this.pushScope();
+
+    for (const narrowing of narrowings) {
+      const symbol: SymbolEntry | undefined = this.tryResolveIdentifier(narrowing.name);
+
+      if (symbol === undefined) {
+        continue;
+      }
+
+      this.peekScope().set(narrowing.name, {
+        declaredType: symbol.declaredType,
+        mutability: symbol.mutability,
+        type: narrowing.type,
+      });
+    }
 
     for (const innerStatement of statement.body) {
       this.checkStatement(innerStatement);
@@ -362,6 +382,7 @@ export class Checker {
         }
 
         this.peekScope().set(parameter.name, {
+          declaredType: parameter.type,
           mutability: parameter.mutability,
           type: parameter.type,
         });
@@ -515,14 +536,17 @@ export class Checker {
     }
 
     this.assertErrorBindingMatchesThrows(errorBinding.type, throwsInfo.throws);
+    const errorType: ResolvedType = this.resolveType(errorBinding.type);
 
     currentScope.set(valueBinding.name.name, {
+      declaredType: valueType,
       mutability: valueBinding.mutability,
       type: valueType,
     });
     currentScope.set(errorBinding.name.name, {
+      declaredType: errorType,
       mutability: errorBinding.mutability,
-      type: this.resolveType(errorBinding.type),
+      type: errorType,
     });
   }
 
@@ -620,6 +644,7 @@ export class Checker {
         }
 
         this.peekScope().set(parameter.name, {
+          declaredType: parameter.type,
           mutability: parameter.mutability,
           type: parameter.type,
         });
@@ -692,7 +717,7 @@ export class Checker {
       throw new CheckerError('If statements require a non-nullable boolean condition.', statement.condition.location);
     }
 
-    this.checkBlockStatement(statement.thenBranch);
+    this.checkBlockStatement(statement.thenBranch, this.resolveConditionNarrowings(statement.condition));
 
     if (statement.elseBranch === null) {
       return;
@@ -1140,6 +1165,7 @@ export class Checker {
         this.assertErrorBindingMatchesThrows(declaration.type, throwsInfo.throws);
 
         currentScope.set(declaration.name.name, {
+          declaredType: declaredType,
           mutability: declaration.mutability,
           type: declaredType,
         });
@@ -1151,6 +1177,7 @@ export class Checker {
     this.assertExpressionAssignable(declaredType, declaration.initializer);
 
     currentScope.set(declaration.name.name, {
+      declaredType: declaredType,
       mutability: declaration.mutability,
       type: declaredType,
     });
@@ -1437,6 +1464,100 @@ export class Checker {
     this.scopes.push(new Map<string, SymbolEntry>());
   }
 
+  private resolveConditionNarrowings(expression: ExpressionNode): ConditionNarrowing[] {
+    switch (expression.kind) {
+      case 'BinaryExpression':
+        if (expression.operator === '&&') {
+          return [
+            ...this.resolveConditionNarrowings(expression.left),
+            ...this.resolveConditionNarrowings(expression.right),
+          ];
+        }
+
+        return this.resolveNullCheckNarrowings(expression);
+      case 'CallExpression':
+        return this.resolveIsInstanceNarrowings(expression);
+      case 'GroupingExpression':
+        return this.resolveConditionNarrowings(expression.expression);
+      default:
+        return [];
+    }
+  }
+
+  private resolveIsInstanceNarrowings(expression: CallExpressionNode): ConditionNarrowing[] {
+    if (
+      expression.callee.kind !== 'IdentifierExpression' ||
+      expression.callee.name !== 'isInstance' ||
+      expression.arguments.length !== 2
+    ) {
+      return [];
+    }
+
+    const instanceArgument: ExpressionNode = expression.arguments[0]!;
+    const targetArgument: ExpressionNode = expression.arguments[1]!;
+
+    if (instanceArgument.kind !== 'IdentifierExpression') {
+      return [];
+    }
+
+    const symbol: SymbolEntry | undefined = this.tryResolveIdentifier(instanceArgument.name);
+
+    if (symbol === undefined) {
+      return [];
+    }
+
+    const targetObject: ClassReference | ResolvedType = this.resolveMemberObject(targetArgument);
+
+    if (!('kind' in targetObject) || targetObject.kind !== 'class_reference') {
+      return [];
+    }
+
+    return [
+      {
+        name: instanceArgument.name,
+        type: {
+          kind: 'class',
+          name: targetObject.classEntry.declaration.name.name,
+          nullable: false,
+        },
+      },
+    ];
+  }
+
+  private resolveNullCheckNarrowings(expression: BinaryExpressionNode): ConditionNarrowing[] {
+    if (expression.operator !== '!=') {
+      return [];
+    }
+
+    let identifier: IdentifierExpressionNode | null = null;
+
+    if (expression.left.kind === 'IdentifierExpression' && expression.right.kind === 'NullLiteral') {
+      identifier = expression.left;
+    } else if (expression.right.kind === 'IdentifierExpression' && expression.left.kind === 'NullLiteral') {
+      identifier = expression.right;
+    }
+
+    if (identifier === null) {
+      return [];
+    }
+
+    const symbol: SymbolEntry | undefined = this.tryResolveIdentifier(identifier.name);
+
+    if (symbol === undefined || !symbol.type.nullable) {
+      return [];
+    }
+
+    return [
+      {
+        name: identifier.name,
+        type: {
+          ...symbol.type,
+          nullable: false,
+        },
+      },
+    ];
+  }
+
   private resolveAssignmentTarget(target: IdentifierExpressionNode | MemberExpressionNode): AssignmentTarget {
     if (target.kind === 'IdentifierExpression') {
       return {
@@ -1629,15 +1750,25 @@ export class Checker {
   }
 
   private resolveIdentifier(expression: IdentifierExpressionNode): SymbolEntry {
+    const symbol: SymbolEntry | undefined = this.tryResolveIdentifier(expression.name);
+
+    if (symbol !== undefined) {
+      return symbol;
+    }
+
+    throw new CheckerError(`Unknown variable "${expression.name}".`, expression.location);
+  }
+
+  private tryResolveIdentifier(name: string): SymbolEntry | undefined {
     for (let index = this.scopes.length - 1; index >= 0; index -= 1) {
-      const symbol: SymbolEntry | undefined = this.scopes[index]?.get(expression.name);
+      const symbol: SymbolEntry | undefined = this.scopes[index]?.get(name);
 
       if (symbol !== undefined) {
         return symbol;
       }
     }
 
-    throw new CheckerError(`Unknown variable "${expression.name}".`, expression.location);
+    return undefined;
   }
 
   private resolveMemberObject(expression: ExpressionNode): ClassReference | ResolvedType {

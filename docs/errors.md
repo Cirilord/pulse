@@ -14,6 +14,7 @@ This document tracks the current `throws` and error-return support in Pulse.
 - Single thrown types are captured with their exact nullable type
 - Multiple thrown types are captured with `unknown?`
 - `isInstance(value, Type)` can be used to refine `unknown?` error bindings
+- After a successful `isInstance(value, Type)` check, the refined value can access the target type fields inside that branch
 
 ## Valid Example
 
@@ -59,7 +60,7 @@ fn main(): int {
   }
 
   if (err != null && isInstance(err, ParseError)) {
-    return 1;
+    return err.message == "Empty text" ? 1 : 3;
   }
 
   return value ?? 0;

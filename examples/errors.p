@@ -39,7 +39,7 @@ fn main(): int {
   }
 
   if (err != null && isInstance(err, ParseError)) {
-    return 1;
+    return err.message == "Empty text" ? 1 : 3;
   }
 
   return value ?? 0;

@@ -104,7 +104,7 @@ int main(void) {
     return 2;
   }
   if (((!err.is_null) && (!err.is_null && strcmp(err.value.type_name, "ParseError") == 0))) {
-    return 1;
+    return ((string_t_equal(err.value.value.ParseError_value.message, STRING_LITERAL("Empty text"))) ? 1 : 3);
   }
   return (value.is_null ? 0 : value.value);
 }

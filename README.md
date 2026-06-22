@@ -24,6 +24,7 @@ This README should be kept up to date as the project evolves.
 - Function, method, and constructor parameters currently require explicit `val` or `var`
 - The compiler currently supports classes with fields, constructors, instance methods, static methods, `this`, field access, method calls, builtin `isInstance(value, Type)`, and constructor calls
 - Throwing calls currently return their error values explicitly, using `unknown?` when a call declares multiple thrown types
+- `isInstance(value, Type)` currently narrows `unknown?` values inside matching `if` branches
 - The compiler currently provides a builtin `Error` class with a `message: string` field and `Error(message)` constructor calls
 - Nullable equality with `==` and `!=` is supported, including comparisons against `null`
 - Conditions and logical negation use strict non-nullable `boolean` values only, with no truthy or falsy coercion
