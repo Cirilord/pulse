@@ -31,6 +31,10 @@ typedef struct {
   string_t message;
 } IoError;
 
+static const string_t ParseError__static_arg__name = STRING_LITERAL("ParseError");
+
+static const string_t IoError__static_arg__name = STRING_LITERAL("IoError");
+
 typedef union {
   ParseError ParseError_value;
   IoError IoError_value;
@@ -62,7 +66,9 @@ typedef struct {
 } parse__result_t;
 
 ParseError ParseError__constructor(const string_t message);
+string_t ParseError__static_method__toString(void);
 IoError IoError__constructor(const string_t message);
+string_t IoError__static_method__toString(void);
 parse__result_t parse(const string_t text);
 IoError_nullable save(const string_t text);
 int main(void);
@@ -74,11 +80,19 @@ ParseError ParseError__constructor(const string_t message) {
   return self;
 }
 
+string_t ParseError__static_method__toString(void) {
+  return STRING_LITERAL("class ParseError {\n  public val message: string;\n  public fn constructor(val message: string);\n}");
+}
+
 IoError IoError__constructor(const string_t message) {
   IoError self = (IoError){ 0 };
   self.pulse__type_name = "IoError";
   self.message = message;
   return self;
+}
+
+string_t IoError__static_method__toString(void) {
+  return STRING_LITERAL("class IoError {\n  public val message: string;\n  public fn constructor(val message: string);\n}");
 }
 
 parse__result_t parse(const string_t text) {

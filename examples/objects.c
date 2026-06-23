@@ -27,7 +27,10 @@ typedef struct {
   int age;
 } User;
 
+static const string_t User__static_arg__name = STRING_LITERAL("User");
+
 User User__constructor(const string_t name, const int age);
+string_t User__static_method__toString(void);
 void User__method__birthday(User *self);
 int User__method__getAge(const User *self);
 User User__static_method__createAdult(const string_t name);
@@ -39,6 +42,10 @@ User User__constructor(const string_t name, const int age) {
   self.name = name;
   self.age = age;
   return self;
+}
+
+string_t User__static_method__toString(void) {
+  return STRING_LITERAL("class User {\n  public val name: string;\n  private var age: int;\n  public fn constructor(val name: string, val age: int);\n  public fn birthday(): void;\n  public fn getAge(): int;\n  public static fn createAdult(val name: string): User;\n}");
 }
 
 void User__method__birthday(User *self) {
@@ -60,8 +67,10 @@ int main(void) {
   const int age = User__method__getAge(&user);
   User adult = User__static_method__createAdult(STRING_LITERAL("Bob"));
   const string_t adultName = adult.name;
+  const string_t className = User__static_arg__name;
+  const string_t classShape = User__static_method__toString();
   const bool adultIsUser = (strcmp(adult.pulse__type_name, "User") == 0);
-  if ((adultIsUser && (string_t_equal(adultName, STRING_LITERAL("Bob"))))) {
+  if ((((adultIsUser && (string_t_equal(adultName, STRING_LITERAL("Bob")))) && (string_t_equal(className, STRING_LITERAL("User")))) && (string_t_equal(classShape, STRING_LITERAL("")) == false))) {
     return age;
   }
   return 0;

@@ -70,14 +70,39 @@ describe('objects example', function describeObjectsExample(): void {
       type: { kind: 'NamedType', name: 'User' },
     });
 
-    expect(getMainStatements(program)[5]).toMatchObject({
-      initializer: {
-        callee: { kind: 'IdentifierExpression', name: 'isInstance' },
-        kind: 'CallExpression',
-      },
-      kind: 'VariableDeclaration',
-      name: { name: 'adultIsUser' },
-    });
+    expect(getMainStatements(program)).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          initializer: expect.objectContaining({
+            kind: 'MemberExpression',
+            object: expect.objectContaining({ kind: 'IdentifierExpression', name: 'User' }),
+            property: expect.objectContaining({ name: 'name' }),
+          }),
+          kind: 'VariableDeclaration',
+          name: expect.objectContaining({ name: 'className' }),
+        }),
+        expect.objectContaining({
+          initializer: expect.objectContaining({
+            callee: expect.objectContaining({
+              kind: 'MemberExpression',
+              object: expect.objectContaining({ kind: 'IdentifierExpression', name: 'User' }),
+              property: expect.objectContaining({ name: 'toString' }),
+            }),
+            kind: 'CallExpression',
+          }),
+          kind: 'VariableDeclaration',
+          name: expect.objectContaining({ name: 'classShape' }),
+        }),
+        expect.objectContaining({
+          initializer: expect.objectContaining({
+            callee: expect.objectContaining({ kind: 'IdentifierExpression', name: 'isInstance' }),
+            kind: 'CallExpression',
+          }),
+          kind: 'VariableDeclaration',
+          name: expect.objectContaining({ name: 'adultIsUser' }),
+        }),
+      ])
+    );
   });
 
   test('checks examples/objects.p without semantic errors', async function testCheckerOutput(): Promise<void> {

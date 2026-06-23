@@ -563,7 +563,22 @@ export class Checker {
     const instanceInfo: ClassReference | ResolvedType = this.resolveMemberObject(expression.object);
 
     if ('kind' in instanceInfo && instanceInfo.kind === 'class_reference') {
-      throw new CheckerError('Static method references cannot be used as values.', expression.location);
+      if (expression.property.name === 'name') {
+        return {
+          kind: 'primitive',
+          name: 'string',
+          nullable: false,
+        };
+      }
+
+      if (expression.property.name === 'toString') {
+        throw new CheckerError('Static method references are not supported yet.', expression.location);
+      }
+
+      throw new CheckerError(
+        `Class "${instanceInfo.classEntry.declaration.name.name}" does not declare the static field "${expression.property.name}".`,
+        expression.property.location
+      );
     }
 
     if (instanceInfo.kind !== 'class') {
@@ -745,6 +760,21 @@ export class Checker {
     const memberObject: ClassReference | ResolvedType = this.resolveMemberObject(memberExpression.object);
 
     if (memberObject.kind === 'class_reference') {
+      if (memberExpression.property.name === 'toString') {
+        if (expression.arguments.length > 0) {
+          throw new CheckerError(
+            `Static method "${memberObject.classEntry.declaration.name.name}.toString" expects 0 arguments but received ${expression.arguments.length}.`,
+            expression.location
+          );
+        }
+
+        return {
+          kind: 'primitive',
+          name: 'string',
+          nullable: false,
+        };
+      }
+
       const methodEntry: ClassMethodEntry | undefined = memberObject.classEntry.methods.get(
         memberExpression.property.name
       );
@@ -1274,6 +1304,10 @@ export class Checker {
 
       if (methods.has(member.name.name) || fields.has(member.name.name)) {
         throw new CheckerError(`Class member "${member.name.name}" is already declared.`, member.name.location);
+      }
+
+      if (member.isStatic && member.name.name === 'toString') {
+        throw new CheckerError('Static method "toString" is reserved as a builtin class method.', member.name.location);
       }
 
       if (

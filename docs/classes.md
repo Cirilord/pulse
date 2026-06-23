@@ -15,6 +15,8 @@ This document tracks the current class rules in Pulse.
 - `this` is not available inside top-level functions or static methods
 - `Type(...)` calls the class constructor
 - `Type.method(...)` calls a static method
+- `Type.name` returns the class name as `string`
+- `Type.toString()` returns the class shape as `string`
 - `value.method(...)` calls an instance method
 - `isInstance(value, Type)` checks whether a class instance has the exact runtime type `Type`
 - `=` copies values
@@ -44,5 +46,16 @@ class User {
   public static fn createAdult(val name: string): User {
     return User(name, 18);
   }
+}
+
+fn main(): int {
+  val className: string = User.name;
+  val classShape: string = User.toString();
+
+  if (className == "User" && classShape != "") {
+    return 1;
+  }
+
+  return 0;
 }
 ```

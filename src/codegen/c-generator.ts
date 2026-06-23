@@ -114,7 +114,7 @@ export class CGenerator {
     this.temporaryCounter = 0;
 
     const usesBuiltinError: boolean = this.classes.has(BUILTIN_ERROR_CLASS_NAME);
-    const usesStringType: boolean = usesBuiltinError || this.usesStringType(program);
+    const usesStringType: boolean = usesBuiltinError || this.classes.size > 0 || this.usesStringType(program);
     const usesStringEquality: boolean = this.usesStringEquality(program);
     const usesStringRuntimeHelpers: boolean = usesStringEquality || this.usesIsInstance(program);
     const usesUnknownType: boolean = this.usesUnknownType(program);
@@ -156,6 +156,7 @@ export class CGenerator {
     }
 
     this.emitClassDefinitions(lines);
+    this.emitBuiltinClassMembers(lines);
 
     if (usesUnknownType) {
       this.emitUnknownTypeDefinitions(lines);
@@ -366,12 +367,56 @@ export class CGenerator {
     }
   }
 
+  private emitBuiltinClassMembers(lines: string[]): void {
+    for (const classEntry of this.classes.values()) {
+      lines.push(
+        `static const string_t ${this.generateBuiltinClassNameSymbol(classEntry.declaration.name.name)} = STRING_LITERAL(${JSON.stringify(classEntry.declaration.name.name)});`
+      );
+      lines.push('');
+    }
+  }
+
+  private generateClassMemberShape(member: ClassFieldDeclarationNode | ClassMethodDeclarationNode): string {
+    if (member.kind === 'ClassFieldDeclaration') {
+      return `${member.access} ${member.mutability} ${member.name.name}: ${this.stringifyTypeNode(member.type)};`;
+    }
+
+    const prefix: string = member.isStatic ? `${member.access} static fn` : `${member.access} fn`;
+    const parameters: string = member.parameters
+      .map(
+        (parameter: FunctionParameterNode): string =>
+          `${parameter.mutability} ${parameter.name.name}: ${this.stringifyTypeNode(parameter.type)}`
+      )
+      .join(', ');
+
+    if (member.isConstructor) {
+      return `${member.access} fn constructor(${parameters});`;
+    }
+
+    return `${prefix} ${member.name.name}(${parameters}): ${this.stringifyTypeNode(member.returnType!)};`;
+  }
+
+  private generateClassShapeLiteral(classEntry: ClassCodegenEntry): string {
+    const lines: string[] = [`class ${classEntry.declaration.name.name} {`];
+
+    for (const member of classEntry.declaration.members) {
+      lines.push(`  ${this.generateClassMemberShape(member)}`);
+    }
+
+    lines.push('}');
+
+    return `STRING_LITERAL(${JSON.stringify(lines.join('\n'))})`;
+  }
+
   private emitImplementations(program: ProgramNode, lines: string[]): void {
     for (const classEntry of this.classes.values()) {
       if (classEntry.constructorMethod !== null) {
         lines.push(...this.generateClassMethodDeclaration(classEntry, classEntry.constructorMethod));
         lines.push('');
       }
+
+      lines.push(...this.generateClassToStringDeclaration(classEntry));
+      lines.push('');
 
       for (const methodEntry of classEntry.methods.values()) {
         lines.push(...this.generateClassMethodDeclaration(classEntry, methodEntry));
@@ -467,6 +512,8 @@ export class CGenerator {
       if (classEntry.constructorMethod !== null) {
         prototypes.push(this.generateClassMethodPrototype(classEntry, classEntry.constructorMethod));
       }
+
+      prototypes.push(this.generateClassToStringPrototype(classEntry));
 
       for (const methodEntry of classEntry.methods.values()) {
         prototypes.push(this.generateClassMethodPrototype(classEntry, methodEntry));
@@ -630,6 +677,17 @@ export class CGenerator {
     const classReferenceName: string | null = this.resolveClassReferenceName(expression.callee.object);
 
     if (classReferenceName !== null) {
+      if (expression.callee.property.name === 'toString') {
+        if (expression.arguments.length > 0) {
+          throw new CGeneratorError(
+            `Static method "${classReferenceName}.toString" expects 0 arguments but received ${expression.arguments.length}.`,
+            expression.location
+          );
+        }
+
+        return `${classReferenceName}__static_method__toString()`;
+      }
+
       const classEntry: ClassCodegenEntry = this.classes.get(classReferenceName)!;
       const methodEntry: ClassMethodCodegenEntry | undefined = classEntry.methods.get(expression.callee.property.name);
 
@@ -750,6 +808,10 @@ export class CGenerator {
     return `${className}__method__${method.name.name}`;
   }
 
+  private generateBuiltinClassNameSymbol(className: string): string {
+    return `${className}__static_arg__name`;
+  }
+
   private getCallableResultTypeName(
     ownerClassName: string | null,
     declaration: ClassMethodDeclarationNode | FunctionDeclarationNode
@@ -824,6 +886,18 @@ export class CGenerator {
     }
 
     return `${returnType} ${this.generateClassMethodName(classEntry.declaration.name.name, method)}(${parameters.length > 0 ? parameters.join(', ') : 'void'});`;
+  }
+
+  private generateClassToStringPrototype(classEntry: ClassCodegenEntry): string {
+    return `string_t ${classEntry.declaration.name.name}__static_method__toString(void);`;
+  }
+
+  private generateClassToStringDeclaration(classEntry: ClassCodegenEntry): string[] {
+    return [
+      `${this.generateClassToStringPrototype(classEntry).replace(/;$/u, ' {')}`,
+      `${this.indent(1)}return ${this.generateClassShapeLiteral(classEntry)};`,
+      '}',
+    ];
   }
 
   private generateConditionalExpression(expression: ConditionalExpressionNode): string {
@@ -994,7 +1068,18 @@ export class CGenerator {
     const classReferenceName: string | null = this.resolveClassReferenceName(expression.object);
 
     if (classReferenceName !== null) {
-      throw new CGeneratorError('Static members cannot be accessed as values.', expression.location);
+      if (expression.property.name === 'name') {
+        return this.generateBuiltinClassNameSymbol(classReferenceName);
+      }
+
+      if (expression.property.name === 'toString') {
+        throw new CGeneratorError('Static method references are not supported yet.', expression.location);
+      }
+
+      throw new CGeneratorError(
+        `Class "${classReferenceName}" does not declare the static field "${expression.property.name}".`,
+        expression.property.location
+      );
     }
 
     const objectExpression: string = this.generateExpression(expression.object);
@@ -1993,7 +2078,18 @@ export class CGenerator {
     const classReferenceName: string | null = this.resolveClassReferenceName(expression.object);
 
     if (classReferenceName !== null) {
-      throw new CGeneratorError('Static members cannot be accessed as values.', expression.location);
+      if (expression.property.name === 'name') {
+        return { kind: 'NamedType', location: expression.location, name: 'string' };
+      }
+
+      if (expression.property.name === 'toString') {
+        throw new CGeneratorError('Static method references are not supported yet.', expression.location);
+      }
+
+      throw new CGeneratorError(
+        `Class "${classReferenceName}" does not declare the static field "${expression.property.name}".`,
+        expression.property.location
+      );
     }
 
     const objectType: TypeNode = this.resolveExpressionType(expression.object);
@@ -2056,6 +2152,10 @@ export class CGenerator {
       const classReferenceName: string | null = this.resolveClassReferenceName(expression.callee.object);
 
       if (classReferenceName !== null) {
+        if (expression.callee.property.name === 'toString') {
+          return { kind: 'NamedType', location: expression.location, name: 'string' };
+        }
+
         const classEntry: ClassCodegenEntry = this.classes.get(classReferenceName)!;
         const methodEntry: ClassMethodCodegenEntry | undefined = classEntry.methods.get(
           expression.callee.property.name
@@ -2263,6 +2363,14 @@ export class CGenerator {
     const typeName: string = type.kind === 'NullableType' ? type.type.name : type.name;
 
     return this.isPrimitiveTypeName(typeName);
+  }
+
+  private stringifyTypeNode(type: TypeNode): string {
+    if (type.kind === 'NullableType') {
+      return `${type.type.name}?`;
+    }
+
+    return type.name;
   }
 
   private typeUsesString(type: TypeNode): boolean {

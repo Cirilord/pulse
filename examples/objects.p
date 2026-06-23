@@ -28,9 +28,11 @@ fn main(): int {
   val age: int = user.getAge();
   val adult: User = User.createAdult("Bob");
   val adultName: string = adult.name;
+  val className: string = User.name;
+  val classShape: string = User.toString();
   val adultIsUser: boolean = isInstance(adult, User);
 
-  if (adultIsUser && adultName == "Bob") {
+  if (adultIsUser && adultName == "Bob" && className == "User" && classShape != "") {
     return age;
   }
 
