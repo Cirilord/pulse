@@ -20,7 +20,7 @@ This README should be kept up to date as the project evolves.
 - A basic semantic checker is available in `src/checker`
 - A basic C generator is available in `src/codegen`
 - A basic native compilation runner is available in `src/compiler`
-- The compiler currently supports function declarations, `throws`, explicit `return` statements, block statements with lexical scoping, `if`/`elif`/`else`, `while`, `do while`, `for`, `break`, `continue`, identifier references, grouping with parentheses, unary expressions, arithmetic, bitwise operations, comparisons, logical expressions, conditional expressions, null coalescing expressions, and compound assignment statements
+- The compiler currently supports function declarations, `throws`, explicit `return` statements, `defer` statements, block statements with lexical scoping, `if`/`elif`/`else`, `while`, `do while`, `for`, `break`, `continue`, identifier references, grouping with parentheses, unary expressions, arithmetic, bitwise operations, comparisons, logical expressions, conditional expressions, null coalescing expressions, and compound assignment statements
 - Function, method, and constructor parameters currently require explicit `val` or `var`
 - The compiler currently supports classes with fields, constructors, instance methods, static methods, `this`, field access, method calls, builtin `isInstance(value, Type)`, and constructor calls
 - Throwing calls currently return their error values explicitly, using `unknown?` when a call declares multiple thrown types

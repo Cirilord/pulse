@@ -13,6 +13,7 @@ import type {
   ClassMethodDeclarationNode,
   ConditionalExpressionNode,
   ContinueStatementNode,
+  DeferStatementNode,
   DoWhileStatementNode,
   ExpressionNode,
   ExpressionStatementNode,
@@ -471,6 +472,14 @@ export class Checker {
     this.loopDepth += 1;
     this.checkBlockStatement(statement.body);
     this.loopDepth -= 1;
+  }
+
+  private checkDeferStatement(statement: DeferStatementNode): void {
+    if (statement.expression.kind !== 'CallExpression') {
+      throw new CheckerError('Defer statements require a call expression.', statement.expression.location);
+    }
+
+    this.resolveExpressionType(statement.expression);
   }
 
   private checkExpressionStatement(statement: ExpressionStatementNode): void {
@@ -998,6 +1007,9 @@ export class Checker {
       case 'ContinueStatement':
         this.checkContinueStatement(statement);
         return;
+      case 'DeferStatement':
+        this.checkDeferStatement(statement);
+        return;
       case 'DoWhileStatement':
         this.checkDoWhileStatement(statement);
         return;
@@ -1398,6 +1410,8 @@ export class Checker {
           );
         case 'ReturnStatement':
           return statement.values.some(expressionMutatesThis);
+        case 'DeferStatement':
+          return expressionMutatesThis(statement.expression);
         case 'VariableDeclaration':
           return expressionMutatesThis(statement.initializer);
         case 'MultiVariableDeclaration':
@@ -1998,6 +2012,7 @@ export class Checker {
         return true;
       case 'BreakStatement':
       case 'ContinueStatement':
+      case 'DeferStatement':
       case 'DoWhileStatement':
       case 'ExpressionStatement':
       case 'ForStatement':

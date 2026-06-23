@@ -21,3 +21,6 @@ This document tracks the current control flow and block rules in Pulse.
 
 - Block scopes allow variable shadowing, so an inner block may declare a new variable with the same name as an outer declaration
 - The `for` initializer scope is available to the loop condition, loop update, and loop body
+- `defer someCall();` registers a deferred call for the current scope
+- Deferred calls run in reverse order when leaving the scope
+- Deferred calls run before `return`, `break`, and `continue` leave the current scope

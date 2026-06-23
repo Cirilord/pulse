@@ -5,6 +5,7 @@ export type { ClassDeclarationNode, ClassMemberDeclarationNode } from './class-d
 export type { AccessModifier, ClassFieldDeclarationNode } from './class-field-declaration-node.js';
 export type { ClassMethodDeclarationNode } from './class-method-declaration-node.js';
 export type { ContinueStatementNode } from './continue-statement-node.js';
+export type { DeferStatementNode } from './defer-statement-node.js';
 export type { DoWhileStatementNode } from './do-while-statement-node.js';
 export type { ForInitializerNode, ForStatementNode } from './for-statement-node.js';
 export type {

@@ -13,6 +13,7 @@ import type {
   ConditionalExpressionNode,
   ContinueStatementNode,
   DoWhileStatementNode,
+  DeferStatementNode,
   ExpressionNode,
   ExpressionStatementNode,
   FunctionDeclarationNode,
@@ -57,6 +58,11 @@ type ScopeEntry = {
   type: TypeNode;
 };
 
+type CleanupScope = {
+  defers: DeferStatementNode[];
+  kind: 'block' | 'function' | 'loop';
+};
+
 export class CGeneratorError extends Error {
   public readonly location: TokenLocation;
 
@@ -78,6 +84,8 @@ export class CGenerator {
 
   private readonly functions: Map<string, FunctionCodegenEntry>;
 
+  private readonly cleanupScopes: CleanupScope[];
+
   private readonly scopes: Map<string, ScopeEntry>[];
 
   private temporaryCounter: number;
@@ -88,6 +96,7 @@ export class CGenerator {
     this.currentFunction = null;
     this.currentMethod = null;
     this.functions = new Map<string, FunctionCodegenEntry>();
+    this.cleanupScopes = [];
     this.scopes = [];
     this.temporaryCounter = 0;
   }
@@ -97,6 +106,7 @@ export class CGenerator {
     this.collectClasses(program);
     this.functions.clear();
     this.collectFunctions(program);
+    this.cleanupScopes.length = 0;
     this.scopes.length = 0;
     this.currentFunction = null;
     this.currentMethod = null;
@@ -562,7 +572,7 @@ export class CGenerator {
   }
 
   private generateBreakStatement(_statement: BreakStatementNode, indentLevel: number): string[] {
-    return [`${this.indent(indentLevel)}break;`];
+    return [...this.generateDeferredExitStatements(indentLevel, 'loop'), `${this.indent(indentLevel)}break;`];
   }
 
   private generateCallExpression(expression: CallExpressionNode): string {
@@ -675,6 +685,7 @@ export class CGenerator {
     methodEntry: ClassMethodCodegenEntry
   ): string[] {
     this.pushScope();
+    this.pushCleanupScope('function');
     const previousClass: ClassCodegenEntry | null = this.currentClass;
     const previousFunction: FunctionCodegenEntry | null = this.currentFunction;
     const previousMethod: ClassMethodCodegenEntry | null = this.currentMethod;
@@ -698,8 +709,19 @@ export class CGenerator {
       lines.push(`${this.indent(1)}self.pulse__type_name = "${classEntry.declaration.name.name}";`);
     }
 
+    let exitedEarly: boolean = false;
+
     for (const statement of methodEntry.declaration.body.body) {
       lines.push(...this.generateStatement(statement, 1));
+
+      if (this.statementAlwaysExitsScope(statement)) {
+        exitedEarly = true;
+        break;
+      }
+    }
+
+    if (!exitedEarly) {
+      lines.push(...this.generateCurrentScopeDeferredStatements(1));
     }
 
     if (methodEntry.declaration.isConstructor) {
@@ -709,6 +731,7 @@ export class CGenerator {
     this.currentClass = previousClass;
     this.currentFunction = previousFunction;
     this.currentMethod = previousMethod;
+    this.popCleanupScope();
     this.popScope();
     lines.push('}');
 
@@ -813,18 +836,42 @@ export class CGenerator {
   }
 
   private generateContinueStatement(_statement: ContinueStatementNode, indentLevel: number): string[] {
-    return [`${this.indent(indentLevel)}continue;`];
+    return [...this.generateDeferredExitStatements(indentLevel, 'loop'), `${this.indent(indentLevel)}continue;`];
+  }
+
+  private generateDeferStatement(statement: DeferStatementNode): string[] {
+    const currentCleanupScope: CleanupScope | undefined = this.cleanupScopes.at(-1);
+
+    if (currentCleanupScope === undefined) {
+      throw new CGeneratorError('Defer statements require an active scope.', statement.location);
+    }
+
+    currentCleanupScope.defers.push(statement);
+
+    return [];
   }
 
   private generateDoWhileStatement(statement: DoWhileStatementNode, indentLevel: number): string[] {
     const lines: string[] = [`${this.indent(indentLevel)}do {`];
 
     this.pushScope();
+    this.pushCleanupScope('loop');
+
+    let exitedEarly: boolean = false;
 
     for (const bodyStatement of statement.body.body) {
       lines.push(...this.generateStatement(bodyStatement, indentLevel + 1));
+
+      if (this.statementAlwaysExitsScope(bodyStatement)) {
+        exitedEarly = true;
+        break;
+      }
     }
 
+    if (!exitedEarly) {
+      lines.push(...this.generateCurrentScopeDeferredStatements(indentLevel + 1));
+    }
+    this.popCleanupScope();
     this.popScope();
     lines.push(`${this.indent(indentLevel)}} while (${this.generateExpression(statement.condition)});`);
 
@@ -1031,11 +1078,23 @@ export class CGenerator {
     const lines: string[] = [`${this.indent(indentLevel)}for (${initializer}; ${condition}; ${update}) {`];
 
     this.pushScope();
+    this.pushCleanupScope('loop');
+
+    let exitedEarly: boolean = false;
 
     for (const bodyStatement of statement.body.body) {
       lines.push(...this.generateStatement(bodyStatement, indentLevel + 1));
+
+      if (this.statementAlwaysExitsScope(bodyStatement)) {
+        exitedEarly = true;
+        break;
+      }
     }
 
+    if (!exitedEarly) {
+      lines.push(...this.generateCurrentScopeDeferredStatements(indentLevel + 1));
+    }
+    this.popCleanupScope();
     this.popScope();
     this.popScope();
     lines.push(`${this.indent(indentLevel)}}`);
@@ -1045,6 +1104,7 @@ export class CGenerator {
 
   private generateFunctionDeclaration(statement: FunctionDeclarationNode): string[] {
     this.pushScope();
+    this.pushCleanupScope('function');
     const previousFunction: FunctionCodegenEntry | null = this.currentFunction;
     const previousMethod: ClassMethodCodegenEntry | null = this.currentMethod;
     const previousClass: ClassCodegenEntry | null = this.currentClass;
@@ -1061,13 +1121,24 @@ export class CGenerator {
 
     const lines: string[] = [this.generateFunctionPrototype(statement).replace(/;$/u, ' {')];
 
+    let exitedEarly: boolean = false;
+
     for (const bodyStatement of statement.body.body) {
       lines.push(...this.generateStatement(bodyStatement, 1));
+
+      if (this.statementAlwaysExitsScope(bodyStatement)) {
+        exitedEarly = true;
+        break;
+      }
     }
 
+    if (!exitedEarly) {
+      lines.push(...this.generateCurrentScopeDeferredStatements(1));
+    }
     this.currentFunction = previousFunction;
     this.currentMethod = previousMethod;
     this.currentClass = previousClass;
+    this.popCleanupScope();
     this.popScope();
     lines.push('}');
 
@@ -1241,17 +1312,22 @@ export class CGenerator {
   private generateReturnStatement(statement: ReturnStatementNode, indentLevel: number): string[] {
     const declaration: ClassMethodDeclarationNode | FunctionDeclarationNode = this.getCurrentCallableDeclaration();
     const returnType: TypeNode | null = declaration.returnType;
+    const deferredExitStatements: string[] = this.generateDeferredExitStatements(indentLevel, 'function');
 
     if (declaration.throws.length === 0) {
       if (statement.values.length === 0) {
-        return [`${this.indent(indentLevel)}return;`];
+        return [...deferredExitStatements, `${this.indent(indentLevel)}return;`];
       }
 
-      return [`${this.indent(indentLevel)}return ${this.generateExpression(statement.values[0]!)};`];
+      return [
+        ...deferredExitStatements,
+        `${this.indent(indentLevel)}return ${this.generateExpression(statement.values[0]!)};`,
+      ];
     }
 
     if (returnType !== null && returnType.kind === 'NamedType' && returnType.name === 'void') {
       return [
+        ...deferredExitStatements,
         `${this.indent(indentLevel)}return ${this.generateThrowErrorValue(declaration.throws, statement.values[0]!)};`,
       ];
     }
@@ -1261,6 +1337,7 @@ export class CGenerator {
     }
 
     return [
+      ...deferredExitStatements,
       `${this.indent(indentLevel)}return (${this.getCallableResultTypeName(
         this.currentClass?.declaration.name.name ?? null,
         declaration
@@ -1275,11 +1352,13 @@ export class CGenerator {
     statements: StatementNode[],
     indentLevel: number,
     openingLine: string,
-    narrowings: ConditionNarrowing[] = []
+    narrowings: ConditionNarrowing[] = [],
+    cleanupKind: CleanupScope['kind'] = 'block'
   ): string[] {
     const lines: string[] = [openingLine];
 
     this.pushScope();
+    this.pushCleanupScope(cleanupKind);
 
     for (const narrowing of narrowings) {
       const currentEntry: ScopeEntry = this.resolveVariableEntry(narrowing.name);
@@ -1289,10 +1368,21 @@ export class CGenerator {
       });
     }
 
+    let exitedEarly: boolean = false;
+
     for (const statement of statements) {
       lines.push(...this.generateStatement(statement, indentLevel + 1));
+
+      if (this.statementAlwaysExitsScope(statement)) {
+        exitedEarly = true;
+        break;
+      }
     }
 
+    if (!exitedEarly) {
+      lines.push(...this.generateCurrentScopeDeferredStatements(indentLevel + 1));
+    }
+    this.popCleanupScope();
     this.popScope();
     lines.push(`${this.indent(indentLevel)}}`);
 
@@ -1307,6 +1397,8 @@ export class CGenerator {
         return this.generateBreakStatement(statement, indentLevel);
       case 'ContinueStatement':
         return this.generateContinueStatement(statement, indentLevel);
+      case 'DeferStatement':
+        return this.generateDeferStatement(statement);
       case 'DoWhileStatement':
         return this.generateDoWhileStatement(statement, indentLevel);
       case 'ExpressionStatement':
@@ -1410,7 +1502,7 @@ export class CGenerator {
   private generateWhileStatement(statement: WhileStatementNode, indentLevel: number): string[] {
     const openingLine: string = `${this.indent(indentLevel)}while (${this.generateExpression(statement.condition)}) {`;
 
-    return this.generateScopedBlock(statement.body.body, indentLevel, openingLine);
+    return this.generateScopedBlock(statement.body.body, indentLevel, openingLine, [], 'loop');
   }
 
   private getDefaultValue(typeName: string): string {
@@ -1574,6 +1666,8 @@ export class CGenerator {
           );
         case 'ReturnStatement':
           return statement.values.some(expressionMutatesThis);
+        case 'DeferStatement':
+          return expressionMutatesThis(statement.expression);
         case 'MultiVariableDeclaration':
           return expressionMutatesThis(statement.initializer);
         case 'VariableDeclaration':
@@ -1638,6 +1732,59 @@ export class CGenerator {
 
   private pushScope(): void {
     this.scopes.push(new Map<string, ScopeEntry>());
+  }
+
+  private pushCleanupScope(kind: CleanupScope['kind']): void {
+    this.cleanupScopes.push({
+      defers: [],
+      kind,
+    });
+  }
+
+  private popCleanupScope(): void {
+    const cleanupScope: CleanupScope | undefined = this.cleanupScopes.pop();
+
+    if (cleanupScope === undefined) {
+      throw new Error('C generator cannot pop an empty cleanup scope stack.');
+    }
+  }
+
+  private generateCurrentScopeDeferredStatements(indentLevel: number): string[] {
+    const cleanupScope: CleanupScope | undefined = this.cleanupScopes.at(-1);
+
+    if (cleanupScope === undefined) {
+      return [];
+    }
+
+    return [...cleanupScope.defers]
+      .reverse()
+      .map(
+        (statement: DeferStatementNode): string =>
+          `${this.indent(indentLevel)}${this.generateExpression(statement.expression)};`
+      );
+  }
+
+  private generateDeferredExitStatements(indentLevel: number, targetKind: CleanupScope['kind']): string[] {
+    const lines: string[] = [];
+
+    for (let index = this.cleanupScopes.length - 1; index >= 0; index -= 1) {
+      const cleanupScope: CleanupScope = this.cleanupScopes[index]!;
+
+      lines.push(
+        ...[...cleanupScope.defers]
+          .reverse()
+          .map(
+            (statement: DeferStatementNode): string =>
+              `${this.indent(indentLevel)}${this.generateExpression(statement.expression)};`
+          )
+      );
+
+      if (cleanupScope.kind === targetKind) {
+        break;
+      }
+    }
+
+    return lines;
   }
 
   private resolveConditionNarrowings(expression: ExpressionNode): ConditionNarrowing[] {
@@ -2066,6 +2213,48 @@ export class CGenerator {
     return false;
   }
 
+  private statementAlwaysExitsScope(statement: StatementNode): boolean {
+    switch (statement.kind) {
+      case 'BlockStatement':
+        return statement.body.some((innerStatement: StatementNode): boolean =>
+          this.statementAlwaysExitsScope(innerStatement)
+        );
+      case 'IfStatement':
+        if (statement.elseBranch === null) {
+          return false;
+        }
+
+        if (statement.elseBranch.kind === 'BlockStatement') {
+          return (
+            statement.thenBranch.body.some((innerStatement: StatementNode): boolean =>
+              this.statementAlwaysExitsScope(innerStatement)
+            ) &&
+            statement.elseBranch.body.some((innerStatement: StatementNode): boolean =>
+              this.statementAlwaysExitsScope(innerStatement)
+            )
+          );
+        }
+
+        return (
+          statement.thenBranch.body.some((innerStatement: StatementNode): boolean =>
+            this.statementAlwaysExitsScope(innerStatement)
+          ) && this.statementAlwaysExitsScope(statement.elseBranch)
+        );
+      case 'BreakStatement':
+      case 'ContinueStatement':
+      case 'ReturnStatement':
+        return true;
+      case 'DeferStatement':
+      case 'DoWhileStatement':
+      case 'ExpressionStatement':
+      case 'ForStatement':
+      case 'MultiVariableDeclaration':
+      case 'VariableDeclaration':
+      case 'WhileStatement':
+        return false;
+    }
+  }
+
   private shouldEmitConst(type: TypeNode, mutability: 'val' | 'var'): boolean {
     if (mutability !== 'val') {
       return false;
@@ -2204,6 +2393,10 @@ export class CGenerator {
           return false;
         }
 
+        if (statement.kind === 'DeferStatement') {
+          return this.expressionUsesStringEquality(statement.expression);
+        }
+
         if (statement.kind === 'ExpressionStatement') {
           return this.expressionUsesStringEquality(statement.expression);
         }
@@ -2311,6 +2504,10 @@ export class CGenerator {
           );
         }
 
+        if (statement.kind === 'DeferStatement') {
+          return false;
+        }
+
         if (statement.kind === 'VariableDeclaration') {
           return this.typeUsesString(statement.type);
         }
@@ -2404,6 +2601,8 @@ export class CGenerator {
           return false;
         case 'DoWhileStatement':
           return statement.body.body.some(statementUsesBuiltinError) || expressionUsesBuiltinError(statement.condition);
+        case 'DeferStatement':
+          return expressionUsesBuiltinError(statement.expression);
         case 'ExpressionStatement':
           return expressionUsesBuiltinError(statement.expression);
         case 'ForStatement':
@@ -2482,6 +2681,8 @@ export class CGenerator {
           return false;
         case 'DoWhileStatement':
           return statement.body.body.some(statementUsesUnknown);
+        case 'DeferStatement':
+          return false;
         case 'ExpressionStatement':
           return false;
         case 'ForStatement':
@@ -2584,6 +2785,8 @@ export class CGenerator {
           return false;
         case 'DoWhileStatement':
           return statementUsesIsInstance(statement.body) || expressionUsesIsInstance(statement.condition);
+        case 'DeferStatement':
+          return expressionUsesIsInstance(statement.expression);
         case 'ExpressionStatement':
           return expressionUsesIsInstance(statement.expression);
         case 'ForStatement':

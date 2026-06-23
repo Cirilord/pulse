@@ -10,6 +10,7 @@ export enum TokenType {
   Comma = 'Comma',
   Constructor = 'Constructor',
   Continue = 'Continue',
+  Defer = 'Defer',
   Do = 'Do',
   Dot = 'Dot',
   DoubleLiteral = 'DoubleLiteral',

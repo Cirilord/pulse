@@ -5,6 +5,7 @@ export const KEYWORDS: ReadonlyMap<string, TokenType> = new Map<string, TokenTyp
   ['class', TokenType.Class],
   ['constructor', TokenType.Constructor],
   ['continue', TokenType.Continue],
+  ['defer', TokenType.Defer],
   ['do', TokenType.Do],
   ['elif', TokenType.Elif],
   ['else', TokenType.Else],

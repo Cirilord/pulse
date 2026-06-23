@@ -14,6 +14,7 @@ import type {
   ClassMethodDeclarationNode,
   ConditionalExpressionNode,
   ContinueStatementNode,
+  DeferStatementNode,
   DoWhileStatementNode,
   ExpressionNode,
   ExpressionStatementNode,
@@ -587,6 +588,17 @@ export class Parser {
     };
   }
 
+  private parseDeferStatement(keywordToken: Token): DeferStatementNode {
+    const expression: ExpressionNode = this.parseExpression();
+    const semicolonToken: Token = this.consume(TokenType.Semicolon, 'Expected ";" after the defer expression.');
+
+    return {
+      expression,
+      kind: 'DeferStatement',
+      location: this.mergeLocations(keywordToken.location, semicolonToken.location),
+    };
+  }
+
   private parseElifBranch(keywordToken: Token): IfStatementNode {
     this.consume(TokenType.LeftParen, 'Expected "(" after "elif".');
 
@@ -1047,6 +1059,10 @@ export class Parser {
 
     if (this.match(TokenType.Do)) {
       return this.parseDoWhileStatement(this.previous());
+    }
+
+    if (this.match(TokenType.Defer)) {
+      return this.parseDeferStatement(this.previous());
     }
 
     if (this.match(TokenType.For)) {
