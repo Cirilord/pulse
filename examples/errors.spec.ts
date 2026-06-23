@@ -51,16 +51,14 @@ describe('errors example', function describeErrorsExample(): void {
 
   test('allows accessing refined unknown error fields after isInstance', function testUnknownErrorNarrowing(): void {
     const sourceCode =
-      'class ParseError {\n' +
-      '  public val message: string;\n\n' +
+      'class ParseError extends Error {\n' +
       '  public fn constructor(val message: string) {\n' +
-      '    this.message = message;\n' +
+      '    super(message);\n' +
       '  }\n' +
       '}\n\n' +
-      'class IoError {\n' +
-      '  public val message: string;\n\n' +
+      'class IoError extends Error {\n' +
       '  public fn constructor(val message: string) {\n' +
-      '    this.message = message;\n' +
+      '    super(message);\n' +
       '  }\n' +
       '}\n\n' +
       'fn parse(val text: string): int? throws ParseError, IoError {\n' +
@@ -84,16 +82,14 @@ describe('errors example', function describeErrorsExample(): void {
 
   test('rejects accessing unknown error fields without isInstance narrowing', function testUnknownErrorWithoutNarrowing(): void {
     const sourceCode =
-      'class ParseError {\n' +
-      '  public val message: string;\n\n' +
+      'class ParseError extends Error {\n' +
       '  public fn constructor(val message: string) {\n' +
-      '    this.message = message;\n' +
+      '    super(message);\n' +
       '  }\n' +
       '}\n\n' +
-      'class IoError {\n' +
-      '  public val message: string;\n\n' +
+      'class IoError extends Error {\n' +
       '  public fn constructor(val message: string) {\n' +
-      '    this.message = message;\n' +
+      '    super(message);\n' +
       '  }\n' +
       '}\n\n' +
       'fn parse(val text: string): int? throws ParseError, IoError {\n' +
@@ -122,16 +118,14 @@ describe('errors example', function describeErrorsExample(): void {
 
   test('rejects capturing multiple thrown types without unknown?', function testInvalidMultiThrowBinding(): void {
     const sourceCode =
-      'class ParseError {\n' +
-      '  public val message: string;\n\n' +
+      'class ParseError extends Error {\n' +
       '  public fn constructor(val message: string) {\n' +
-      '    this.message = message;\n' +
+      '    super(message);\n' +
       '  }\n' +
       '}\n\n' +
-      'class IoError {\n' +
-      '  public val message: string;\n\n' +
+      'class IoError extends Error {\n' +
       '  public fn constructor(val message: string) {\n' +
-      '    this.message = message;\n' +
+      '    super(message);\n' +
       '  }\n' +
       '}\n\n' +
       'fn parse(val text: string): int? throws ParseError, IoError {\n' +

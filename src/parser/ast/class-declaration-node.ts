@@ -6,6 +6,7 @@ import type { IdentifierNode } from './identifier-node.js';
 export type ClassMemberDeclarationNode = ClassFieldDeclarationNode | ClassMethodDeclarationNode;
 
 export type ClassDeclarationNode = BaseNode & {
+  baseName: IdentifierNode | null;
   kind: 'ClassDeclaration';
   members: ClassMemberDeclarationNode[];
   name: IdentifierNode;

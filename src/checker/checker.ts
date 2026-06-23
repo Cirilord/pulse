@@ -69,18 +69,21 @@ type ResolvedParameter = {
 type ClassFieldEntry = {
   declaration: ClassFieldDeclarationNode;
   mutability: 'val' | 'var';
+  ownerClassName: string;
   type: ResolvedType;
 };
 
 type ClassMethodEntry = {
   declaration: ClassMethodDeclarationNode;
   mutatesThis: boolean;
+  ownerClassName: string;
   parameters: ResolvedParameter[];
   returnType: ResolvedType | null;
   throws: ResolvedType[];
 };
 
 type ClassEntry = {
+  baseClassName: string | null;
   constructorMethod: ClassMethodEntry | null;
   declaration: ClassDeclarationNode;
   fields: Map<string, ClassFieldEntry>;
@@ -169,6 +172,12 @@ export class Checker {
 
     for (const topLevel of program.body) {
       if (topLevel.kind === 'ClassDeclaration') {
+        this.predeclareClass(topLevel);
+      }
+    }
+
+    for (const topLevel of program.body) {
+      if (topLevel.kind === 'ClassDeclaration') {
         this.declareClass(topLevel);
       }
     }
@@ -187,7 +196,23 @@ export class Checker {
   }
 
   private declareBuiltinClasses(): void {
-    this.declareClass(createBuiltinErrorClassDeclaration());
+    const errorClassDeclaration: ClassDeclarationNode = createBuiltinErrorClassDeclaration();
+    this.predeclareClass(errorClassDeclaration);
+    this.declareClass(errorClassDeclaration);
+  }
+
+  private predeclareClass(declaration: ClassDeclarationNode): void {
+    if (this.classes.has(declaration.name.name) || PRIMITIVE_TYPES.has(declaration.name.name)) {
+      throw new CheckerError(`Class "${declaration.name.name}" is already declared.`, declaration.name.location);
+    }
+
+    this.classes.set(declaration.name.name, {
+      baseClassName: declaration.baseName?.name ?? null,
+      constructorMethod: null,
+      declaration,
+      fields: new Map<string, ClassFieldEntry>(),
+      methods: new Map<string, ClassMethodEntry>(),
+    });
   }
 
   private assertExpressionAssignable(targetType: ResolvedType, expression: ExpressionNode): void {
@@ -240,6 +265,100 @@ export class Checker {
 
   private canAccessPrivateMember(ownerClassName: string): boolean {
     return this.currentClass?.declaration.name.name === ownerClassName;
+  }
+
+  private classChainContains(classEntry: ClassEntry, className: string): boolean {
+    let currentBaseClassName: string | null = classEntry.baseClassName;
+
+    while (currentBaseClassName !== null) {
+      if (currentBaseClassName === className) {
+        return true;
+      }
+
+      currentBaseClassName = this.classes.get(currentBaseClassName)?.baseClassName ?? null;
+    }
+
+    return false;
+  }
+
+  private findFieldEntryInHierarchy(
+    classEntry: ClassEntry,
+    fieldName: string
+  ): { ownerClassEntry: ClassEntry; fieldEntry: ClassFieldEntry } | null {
+    let currentClassEntry: ClassEntry | undefined = classEntry;
+
+    while (currentClassEntry !== undefined) {
+      const fieldEntry: ClassFieldEntry | undefined = currentClassEntry.fields.get(fieldName);
+
+      if (fieldEntry !== undefined) {
+        return {
+          fieldEntry,
+          ownerClassEntry: currentClassEntry,
+        };
+      }
+
+      currentClassEntry =
+        currentClassEntry.baseClassName === null ? undefined : this.classes.get(currentClassEntry.baseClassName);
+    }
+
+    return null;
+  }
+
+  private findMethodEntryInHierarchy(
+    classEntry: ClassEntry,
+    methodName: string
+  ): { methodEntry: ClassMethodEntry; ownerClassEntry: ClassEntry } | null {
+    let currentClassEntry: ClassEntry | undefined = classEntry;
+
+    while (currentClassEntry !== undefined) {
+      const methodEntry: ClassMethodEntry | undefined = currentClassEntry.methods.get(methodName);
+
+      if (methodEntry !== undefined) {
+        return {
+          methodEntry,
+          ownerClassEntry: currentClassEntry,
+        };
+      }
+
+      currentClassEntry =
+        currentClassEntry.baseClassName === null ? undefined : this.classes.get(currentClassEntry.baseClassName);
+    }
+
+    return null;
+  }
+
+  private findMethodEntryInBaseHierarchy(
+    classEntry: ClassEntry,
+    methodName: string
+  ): { methodEntry: ClassMethodEntry; ownerClassEntry: ClassEntry } | null {
+    if (classEntry.baseClassName === null) {
+      return null;
+    }
+
+    const baseClassEntry: ClassEntry | undefined = this.classes.get(classEntry.baseClassName);
+
+    if (baseClassEntry === undefined) {
+      return null;
+    }
+
+    return this.findMethodEntryInHierarchy(baseClassEntry, methodName);
+  }
+
+  private findFieldEntryInBaseHierarchy(
+    classEntry: ClassEntry,
+    fieldName: string
+  ): { ownerClassEntry: ClassEntry; fieldEntry: ClassFieldEntry } | null {
+    if (classEntry.baseClassName === null) {
+      return null;
+    }
+
+    const baseClassEntry: ClassEntry | undefined = this.classes.get(classEntry.baseClassName);
+
+    if (baseClassEntry === undefined) {
+      return null;
+    }
+
+    return this.findFieldEntryInHierarchy(baseClassEntry, fieldName);
   }
 
   private checkAssignmentExpression(expression: AssignmentExpressionNode): ResolvedType {
@@ -317,6 +436,10 @@ export class Checker {
   }
 
   private checkCallExpression(expression: CallExpressionNode): ResolvedType {
+    if (expression.callee.kind === 'SuperExpression') {
+      return this.checkSuperConstructorCall(expression);
+    }
+
     if (expression.callee.kind === 'IdentifierExpression') {
       if (expression.callee.name === 'isInstance') {
         return this.checkIsInstanceCall(expression);
@@ -335,6 +458,38 @@ export class Checker {
       'Only named functions, constructors, and methods can be called.',
       expression.callee.location
     );
+  }
+
+  private checkSuperConstructorCall(expression: CallExpressionNode & { callee: ExpressionNode }): ResolvedType {
+    if (this.currentMethod === null || !this.currentMethod.declaration.isConstructor || this.currentClass === null) {
+      throw new CheckerError('"super(...)" can only be used inside derived class constructors.', expression.location);
+    }
+
+    if (this.currentClass.baseClassName === null) {
+      throw new CheckerError('"super(...)" can only be used inside derived class constructors.', expression.location);
+    }
+
+    const baseClassEntry: ClassEntry | undefined = this.classes.get(this.currentClass.baseClassName);
+
+    if (baseClassEntry === undefined || baseClassEntry.constructorMethod === null) {
+      throw new CheckerError(
+        `Base class "${this.currentClass.baseClassName}" does not declare a constructor.`,
+        expression.location
+      );
+    }
+
+    this.assertArgumentsMatchParameters(
+      expression.arguments,
+      baseClassEntry.constructorMethod.parameters,
+      expression.location,
+      `Constructor "${baseClassEntry.declaration.name.name}"`
+    );
+
+    return {
+      kind: 'class',
+      name: baseClassEntry.declaration.name.name,
+      nullable: false,
+    };
   }
 
   private checkClassDeclaration(declaration: ClassDeclarationNode): void {
@@ -371,6 +526,10 @@ export class Checker {
       }
     }
 
+    if (declaration.isConstructor) {
+      this.validateConstructorSuperUsage(declaration);
+    }
+
     this.pushScope();
     this.currentFunctionReturnType = methodEntry.returnType;
     this.currentFunctionThrows = methodEntry.throws;
@@ -397,6 +556,43 @@ export class Checker {
       this.currentFunctionThrows = previousFunctionThrows;
       this.currentMethod = previousMethod;
       this.popScope();
+    }
+  }
+
+  private validateConstructorSuperUsage(declaration: ClassMethodDeclarationNode): void {
+    if (this.currentClass === null || this.currentClass.baseClassName === null) {
+      return;
+    }
+
+    const baseClassEntry: ClassEntry | undefined = this.classes.get(this.currentClass.baseClassName);
+    const superCalls: CallExpressionNode[] = declaration.body.body.flatMap(
+      (statement: StatementNode): CallExpressionNode[] => this.collectSuperConstructorCallsFromStatement(statement)
+    );
+
+    if (superCalls.length > 1) {
+      throw new CheckerError('"super(...)" can only be called once in a derived constructor.', superCalls[1]!.location);
+    }
+
+    if (superCalls.length === 1) {
+      const firstStatement: StatementNode | undefined = declaration.body.body[0];
+      const isFirstStatementSuperCall: boolean =
+        firstStatement?.kind === 'ExpressionStatement' &&
+        firstStatement.expression.kind === 'CallExpression' &&
+        firstStatement.expression.callee.kind === 'SuperExpression';
+
+      if (!isFirstStatementSuperCall) {
+        throw new CheckerError(
+          '"super(...)" must be the first statement in a derived constructor.',
+          superCalls[0]!.location
+        );
+      }
+    }
+
+    if (superCalls.length === 0 && baseClassEntry?.constructorMethod !== null) {
+      throw new CheckerError(
+        `Constructor "${this.currentClass.declaration.name.name}" must call super(...).`,
+        declaration.location
+      );
     }
   }
 
@@ -586,10 +782,10 @@ export class Checker {
     }
 
     const classEntry: ClassEntry = this.classes.get(instanceInfo.name)!;
-    const fieldEntry: ClassFieldEntry | undefined = classEntry.fields.get(expression.property.name);
+    const fieldLookup = this.findFieldEntryInHierarchy(classEntry, expression.property.name);
 
-    if (fieldEntry === undefined) {
-      if (classEntry.methods.has(expression.property.name)) {
+    if (fieldLookup === null) {
+      if (this.findMethodEntryInHierarchy(classEntry, expression.property.name) !== null) {
         throw new CheckerError('Method references are not supported yet.', expression.location);
       }
 
@@ -599,14 +795,17 @@ export class Checker {
       );
     }
 
-    if (fieldEntry.declaration.access === 'private' && !this.canAccessPrivateMember(classEntry.declaration.name.name)) {
+    if (
+      fieldLookup.fieldEntry.declaration.access === 'private' &&
+      !this.canAccessPrivateMember(fieldLookup.ownerClassEntry.declaration.name.name)
+    ) {
       throw new CheckerError(
         `Cannot access private field "${expression.property.name}".`,
         expression.property.location
       );
     }
 
-    return fieldEntry.type;
+    return fieldLookup.fieldEntry.type;
   }
 
   private checkForStatement(statement: ForStatementNode): void {
@@ -775,11 +974,9 @@ export class Checker {
         };
       }
 
-      const methodEntry: ClassMethodEntry | undefined = memberObject.classEntry.methods.get(
-        memberExpression.property.name
-      );
+      const methodLookup = this.findMethodEntryInHierarchy(memberObject.classEntry, memberExpression.property.name);
 
-      if (methodEntry === undefined || !methodEntry.declaration.isStatic) {
+      if (methodLookup === null || !methodLookup.methodEntry.declaration.isStatic) {
         throw new CheckerError(
           `Class "${memberObject.classEntry.declaration.name.name}" does not declare the static method "${memberExpression.property.name}".`,
           memberExpression.property.location
@@ -787,8 +984,8 @@ export class Checker {
       }
 
       if (
-        methodEntry.declaration.access === 'private' &&
-        !this.canAccessPrivateMember(memberObject.classEntry.declaration.name.name)
+        methodLookup.methodEntry.declaration.access === 'private' &&
+        !this.canAccessPrivateMember(methodLookup.ownerClassEntry.declaration.name.name)
       ) {
         throw new CheckerError(
           `Cannot access private method "${memberExpression.property.name}".`,
@@ -798,19 +995,19 @@ export class Checker {
 
       this.assertArgumentsMatchParameters(
         expression.arguments,
-        methodEntry.parameters,
+        methodLookup.methodEntry.parameters,
         expression.location,
         `Static method "${memberObject.classEntry.declaration.name.name}.${memberExpression.property.name}"`
       );
 
-      if (methodEntry.throws.length > 0) {
+      if (methodLookup.methodEntry.throws.length > 0) {
         throw new CheckerError(
           `Static method "${memberObject.classEntry.declaration.name.name}.${memberExpression.property.name}" must be captured through its error return values.`,
           expression.location
         );
       }
 
-      return methodEntry.returnType!;
+      return methodLookup.methodEntry.returnType!;
     }
 
     if (memberObject.kind !== 'class') {
@@ -818,9 +1015,9 @@ export class Checker {
     }
 
     const classEntry: ClassEntry = this.classes.get(memberObject.name)!;
-    const methodEntry: ClassMethodEntry | undefined = classEntry.methods.get(memberExpression.property.name);
+    const methodLookup = this.findMethodEntryInHierarchy(classEntry, memberExpression.property.name);
 
-    if (methodEntry === undefined || methodEntry.declaration.isStatic) {
+    if (methodLookup === null || methodLookup.methodEntry.declaration.isStatic) {
       throw new CheckerError(
         `Class "${classEntry.declaration.name.name}" does not declare the instance method "${memberExpression.property.name}".`,
         memberExpression.property.location
@@ -828,8 +1025,8 @@ export class Checker {
     }
 
     if (
-      methodEntry.declaration.access === 'private' &&
-      !this.canAccessPrivateMember(classEntry.declaration.name.name)
+      methodLookup.methodEntry.declaration.access === 'private' &&
+      !this.canAccessPrivateMember(methodLookup.ownerClassEntry.declaration.name.name)
     ) {
       throw new CheckerError(
         `Cannot access private method "${memberExpression.property.name}".`,
@@ -844,7 +1041,7 @@ export class Checker {
       );
     }
 
-    if (methodEntry.mutatesThis && !this.isMutableObjectExpression(memberExpression.object)) {
+    if (methodLookup.methodEntry.mutatesThis && !this.isMutableObjectExpression(memberExpression.object)) {
       throw new CheckerError(
         `Cannot call mutating method "${memberExpression.property.name}" on an immutable object.`,
         memberExpression.object.location
@@ -853,19 +1050,19 @@ export class Checker {
 
     this.assertArgumentsMatchParameters(
       expression.arguments,
-      methodEntry.parameters,
+      methodLookup.methodEntry.parameters,
       expression.location,
       `Method "${classEntry.declaration.name.name}.${memberExpression.property.name}"`
     );
 
-    if (methodEntry.throws.length > 0) {
+    if (methodLookup.methodEntry.throws.length > 0) {
       throw new CheckerError(
         `Method "${classEntry.declaration.name.name}.${memberExpression.property.name}" must be captured through its error return values.`,
         expression.location
       );
     }
 
-    return methodEntry.returnType!;
+    return methodLookup.methodEntry.returnType!;
   }
 
   private checkIsInstanceCall(expression: CallExpressionNode): ResolvedType {
@@ -901,6 +1098,13 @@ export class Checker {
   }
 
   private resolveThrowsCallInfo(expression: CallExpressionNode): ThrowsCallInfo {
+    if (expression.callee.kind === 'SuperExpression') {
+      return {
+        returnType: this.checkSuperConstructorCall(expression),
+        throws: [],
+      };
+    }
+
     if (expression.callee.kind === 'IdentifierExpression') {
       if (expression.callee.name === 'isInstance') {
         return {
@@ -945,26 +1149,24 @@ export class Checker {
       const memberObject: ClassReference | ResolvedType = this.resolveMemberObject(expression.callee.object);
 
       if (memberObject.kind === 'class_reference') {
-        const methodEntry: ClassMethodEntry | undefined = memberObject.classEntry.methods.get(
-          expression.callee.property.name
-        );
+        const methodLookup = this.findMethodEntryInHierarchy(memberObject.classEntry, expression.callee.property.name);
 
-        if (methodEntry !== undefined) {
+        if (methodLookup !== null) {
           return {
-            returnType: methodEntry.returnType!,
-            throws: methodEntry.throws,
+            returnType: methodLookup.methodEntry.returnType!,
+            throws: methodLookup.methodEntry.throws,
           };
         }
       }
 
       if (memberObject.kind === 'class') {
         const classEntry: ClassEntry = this.classes.get(memberObject.name)!;
-        const methodEntry: ClassMethodEntry | undefined = classEntry.methods.get(expression.callee.property.name);
+        const methodLookup = this.findMethodEntryInHierarchy(classEntry, expression.callee.property.name);
 
-        if (methodEntry !== undefined) {
+        if (methodLookup !== null) {
           return {
-            returnType: methodEntry.returnType!,
-            throws: methodEntry.throws,
+            returnType: methodLookup.methodEntry.returnType!,
+            throws: methodLookup.methodEntry.throws,
           };
         }
       }
@@ -1027,6 +1229,8 @@ export class Checker {
   }
 
   private checkStatement(statement: StatementNode): void {
+    this.assertValidSpecialStatementUsage(statement);
+
     switch (statement.kind) {
       case 'BlockStatement':
         this.checkBlockStatement(statement);
@@ -1063,6 +1267,52 @@ export class Checker {
         return;
       case 'WhileStatement':
         this.checkWhileStatement(statement);
+        return;
+    }
+  }
+
+  private assertValidSpecialStatementUsage(statement: StatementNode): void {
+    switch (statement.kind) {
+      case 'BlockStatement':
+      case 'BreakStatement':
+      case 'ContinueStatement':
+        return;
+      case 'DeferStatement':
+        this.assertValidSpecialExpressionUsage(statement.expression);
+        return;
+      case 'DoWhileStatement':
+        this.assertValidSpecialExpressionUsage(statement.condition);
+        return;
+      case 'ExpressionStatement':
+        this.assertValidSpecialExpressionUsage(statement.expression);
+        return;
+      case 'ForStatement':
+        if (statement.initializer.kind === 'VariableDeclaration') {
+          this.assertValidSpecialExpressionUsage(statement.initializer.initializer);
+        } else {
+          this.assertValidSpecialExpressionUsage(statement.initializer);
+        }
+
+        this.assertValidSpecialExpressionUsage(statement.condition);
+        this.assertValidSpecialExpressionUsage(statement.update);
+        return;
+      case 'IfStatement':
+        this.assertValidSpecialExpressionUsage(statement.condition);
+        return;
+      case 'MultiVariableDeclaration':
+        this.assertValidSpecialExpressionUsage(statement.initializer);
+        return;
+      case 'ReturnStatement':
+        for (const value of statement.values) {
+          this.assertValidSpecialExpressionUsage(value);
+        }
+
+        return;
+      case 'VariableDeclaration':
+        this.assertValidSpecialExpressionUsage(statement.initializer);
+        return;
+      case 'WhileStatement':
+        this.assertValidSpecialExpressionUsage(statement.condition);
         return;
     }
   }
@@ -1169,6 +1419,60 @@ export class Checker {
     return targetType;
   }
 
+  private assertValidSpecialExpressionUsage(
+    expression: ExpressionNode,
+    context: 'call-callee' | 'member-object' | 'none' = 'none'
+  ): void {
+    if (expression.kind === 'SuperExpression') {
+      if (context !== 'call-callee' && context !== 'member-object') {
+        throw new CheckerError('"super" can only be used as "super(...)" or "super.member".', expression.location);
+      }
+
+      return;
+    }
+
+    switch (expression.kind) {
+      case 'AssignmentExpression':
+        this.assertValidSpecialExpressionUsage(expression.target);
+        this.assertValidSpecialExpressionUsage(expression.value);
+        return;
+      case 'BinaryExpression':
+        this.assertValidSpecialExpressionUsage(expression.left);
+        this.assertValidSpecialExpressionUsage(expression.right);
+        return;
+      case 'BooleanLiteral':
+      case 'DoubleLiteral':
+      case 'IdentifierExpression':
+      case 'IntegerLiteral':
+      case 'NullLiteral':
+      case 'StringLiteral':
+      case 'ThisExpression':
+        return;
+      case 'CallExpression':
+        this.assertValidSpecialExpressionUsage(expression.callee, 'call-callee');
+
+        for (const argument of expression.arguments) {
+          this.assertValidSpecialExpressionUsage(argument);
+        }
+
+        return;
+      case 'ConditionalExpression':
+        this.assertValidSpecialExpressionUsage(expression.condition);
+        this.assertValidSpecialExpressionUsage(expression.thenExpression);
+        this.assertValidSpecialExpressionUsage(expression.elseExpression);
+        return;
+      case 'GroupingExpression':
+        this.assertValidSpecialExpressionUsage(expression.expression);
+        return;
+      case 'MemberExpression':
+        this.assertValidSpecialExpressionUsage(expression.object, 'member-object');
+        return;
+      case 'UnaryExpression':
+        this.assertValidSpecialExpressionUsage(expression.expression);
+        return;
+    }
+  }
+
   private checkVariableDeclaration(declaration: VariableDeclarationNode): void {
     const currentScope: Map<string, SymbolEntry> = this.peekScope();
 
@@ -1241,17 +1545,37 @@ export class Checker {
   }
 
   private declareClass(declaration: ClassDeclarationNode): void {
-    if (this.classes.has(declaration.name.name) || PRIMITIVE_TYPES.has(declaration.name.name)) {
-      throw new CheckerError(`Class "${declaration.name.name}" is already declared.`, declaration.name.location);
+    const existingClassEntry: ClassEntry | undefined = this.classes.get(declaration.name.name);
+
+    if (existingClassEntry === undefined) {
+      throw new CheckerError(
+        `Class "${declaration.name.name}" must be predeclared before definition.`,
+        declaration.name.location
+      );
     }
 
-    this.classes.set(declaration.name.name, {
-      constructorMethod: null,
-      declaration,
-      fields: new Map<string, ClassFieldEntry>(),
-      methods: new Map<string, ClassMethodEntry>(),
-    });
+    const baseClassName: string | null = declaration.baseName?.name ?? null;
 
+    if (baseClassName !== null) {
+      const baseClassEntry: ClassEntry | undefined = this.classes.get(baseClassName);
+
+      if (baseClassEntry === undefined) {
+        throw new CheckerError(`Unknown base class "${baseClassName}".`, declaration.baseName!.location);
+      }
+
+      if (baseClassName === declaration.name.name) {
+        throw new CheckerError('Classes cannot extend themselves.', declaration.baseName!.location);
+      }
+
+      if (this.classChainContains(baseClassEntry, declaration.name.name)) {
+        throw new CheckerError(
+          `Class "${declaration.name.name}" cannot extend "${baseClassName}" because it would create an inheritance cycle.`,
+          declaration.baseName!.location
+        );
+      }
+    }
+
+    const currentClassEntry: ClassEntry = existingClassEntry;
     const fields: Map<string, ClassFieldEntry> = new Map<string, ClassFieldEntry>();
     const methods: Map<string, ClassMethodEntry> = new Map<string, ClassMethodEntry>();
     let constructorMethod: ClassMethodEntry | null = null;
@@ -1260,6 +1584,20 @@ export class Checker {
       if (member.kind === 'ClassFieldDeclaration') {
         if (fields.has(member.name.name) || methods.has(member.name.name) || member.name.name === 'constructor') {
           throw new CheckerError(`Class member "${member.name.name}" is already declared.`, member.name.location);
+        }
+
+        if (this.findFieldEntryInBaseHierarchy(currentClassEntry, member.name.name) !== null) {
+          throw new CheckerError(
+            `Field "${member.name.name}" is already declared in a base class and cannot be redeclared.`,
+            member.name.location
+          );
+        }
+
+        if (this.findMethodEntryInBaseHierarchy(currentClassEntry, member.name.name) !== null) {
+          throw new CheckerError(
+            `Field "${member.name.name}" conflicts with an inherited method and cannot be declared.`,
+            member.name.location
+          );
         }
 
         const fieldType: ResolvedType = this.resolveType(member.type);
@@ -1271,6 +1609,7 @@ export class Checker {
         fields.set(member.name.name, {
           declaration: member,
           mutability: member.mutability,
+          ownerClassName: declaration.name.name,
           type: fieldType,
         });
 
@@ -1280,12 +1619,17 @@ export class Checker {
       const methodEntry: ClassMethodEntry = {
         declaration: member,
         mutatesThis: this.methodMutatesThis(member),
+        ownerClassName: declaration.name.name,
         parameters: this.resolveParameters(member.parameters, 'Method'),
         returnType: member.returnType === null ? null : this.resolveType(member.returnType),
         throws: this.resolveThrowsTypes(member.throws, member.location),
       };
 
       if (member.isConstructor) {
+        if (member.isOverride) {
+          throw new CheckerError('Constructors cannot use the "override" modifier.', member.location);
+        }
+
         if (member.isStatic) {
           throw new CheckerError('Constructors cannot be static.', member.location);
         }
@@ -1306,8 +1650,23 @@ export class Checker {
         throw new CheckerError(`Class member "${member.name.name}" is already declared.`, member.name.location);
       }
 
+      const inheritedFieldLookup = this.findFieldEntryInBaseHierarchy(currentClassEntry, member.name.name);
+
+      if (inheritedFieldLookup !== null) {
+        throw new CheckerError(
+          `Method "${member.name.name}" conflicts with the inherited field "${member.name.name}".`,
+          member.name.location
+        );
+      }
+
+      const inheritedMethodLookup = this.findMethodEntryInBaseHierarchy(currentClassEntry, member.name.name);
+
       if (member.isStatic && member.name.name === 'toString') {
         throw new CheckerError('Static method "toString" is reserved as a builtin class method.', member.name.location);
+      }
+
+      if (member.isOverride && member.isStatic) {
+        throw new CheckerError('Static methods cannot use the "override" modifier.', member.location);
       }
 
       if (
@@ -1322,10 +1681,60 @@ export class Checker {
         throw new CheckerError('Methods cannot return the unknown type.', member.returnType!.location);
       }
 
+      if (member.isOverride) {
+        if (inheritedMethodLookup === null) {
+          throw new CheckerError(
+            `Method "${member.name.name}" uses "override" but no inherited method was found.`,
+            member.name.location
+          );
+        }
+
+        if (inheritedMethodLookup.methodEntry.declaration.access === 'private') {
+          throw new CheckerError(
+            `Method "${member.name.name}" cannot override a private inherited method.`,
+            member.name.location
+          );
+        }
+
+        if (inheritedMethodLookup.methodEntry.declaration.isStatic) {
+          throw new CheckerError(
+            `Method "${member.name.name}" cannot override the static inherited method "${member.name.name}".`,
+            member.name.location
+          );
+        }
+
+        if (!this.isSameParameterSignature(methodEntry.parameters, inheritedMethodLookup.methodEntry.parameters)) {
+          throw new CheckerError(
+            `Method "${member.name.name}" must match the inherited parameter signature when using "override".`,
+            member.name.location
+          );
+        }
+
+        if (!this.isSameType(methodEntry.returnType!, inheritedMethodLookup.methodEntry.returnType!)) {
+          throw new CheckerError(
+            `Method "${member.name.name}" must match the inherited return type when using "override".`,
+            member.returnType!.location
+          );
+        }
+
+        if (!this.isSameThrowsSignature(methodEntry.throws, inheritedMethodLookup.methodEntry.throws)) {
+          throw new CheckerError(
+            `Method "${member.name.name}" must match the inherited throws signature when using "override".`,
+            member.location
+          );
+        }
+      } else if (inheritedMethodLookup !== null && inheritedMethodLookup.methodEntry.declaration.access !== 'private') {
+        throw new CheckerError(
+          `Method "${member.name.name}" must use the "override" modifier because it overrides an inherited method.`,
+          member.name.location
+        );
+      }
+
       methods.set(member.name.name, methodEntry);
     }
 
     this.classes.set(declaration.name.name, {
+      baseClassName,
       constructorMethod,
       declaration,
       fields,
@@ -1367,6 +1776,7 @@ export class Checker {
     return (
       expression.kind === 'IdentifierExpression' ||
       expression.kind === 'MemberExpression' ||
+      expression.kind === 'SuperExpression' ||
       expression.kind === 'ThisExpression'
     );
   }
@@ -1394,6 +1804,10 @@ export class Checker {
       return true;
     }
 
+    if (rootExpression.kind === 'SuperExpression') {
+      return true;
+    }
+
     if (rootExpression.kind !== 'IdentifierExpression') {
       return false;
     }
@@ -1411,6 +1825,25 @@ export class Checker {
     return (
       leftType.kind === rightType.kind && leftType.name === rightType.name && leftType.nullable === rightType.nullable
     );
+  }
+
+  private isSameParameterSignature(left: ResolvedParameter[], right: ResolvedParameter[]): boolean {
+    if (left.length !== right.length) {
+      return false;
+    }
+
+    return left.every((parameter: ResolvedParameter, index: number): boolean => {
+      const otherParameter: ResolvedParameter = right[index]!;
+      return parameter.mutability === otherParameter.mutability && this.isSameType(parameter.type, otherParameter.type);
+    });
+  }
+
+  private isSameThrowsSignature(left: ResolvedType[], right: ResolvedType[]): boolean {
+    if (left.length !== right.length) {
+      return false;
+    }
+
+    return left.every((type: ResolvedType, index: number): boolean => this.isSameType(type, right[index]!));
   }
 
   private isThisFieldTarget(target: MemberExpressionNode): boolean {
@@ -1461,7 +1894,10 @@ export class Checker {
     const expressionMutatesThis = (expression: ExpressionNode): boolean => {
       switch (expression.kind) {
         case 'AssignmentExpression':
-          return expression.target.kind === 'MemberExpression' && this.isThisFieldTarget(expression.target);
+          return (
+            expression.target.kind === 'MemberExpression' &&
+            (this.isThisFieldTarget(expression.target) || expression.target.object.kind === 'SuperExpression')
+          );
         case 'BinaryExpression':
           return expressionMutatesThis(expression.left) || expressionMutatesThis(expression.right);
         case 'CallExpression':
@@ -1482,6 +1918,7 @@ export class Checker {
         case 'IntegerLiteral':
         case 'NullLiteral':
         case 'StringLiteral':
+        case 'SuperExpression':
         case 'ThisExpression':
           return false;
       }
@@ -1606,6 +2043,104 @@ export class Checker {
     ];
   }
 
+  private collectSuperConstructorCallsFromStatement(statement: StatementNode): CallExpressionNode[] {
+    switch (statement.kind) {
+      case 'BlockStatement':
+        return statement.body.flatMap((innerStatement: StatementNode): CallExpressionNode[] =>
+          this.collectSuperConstructorCallsFromStatement(innerStatement)
+        );
+      case 'BreakStatement':
+      case 'ContinueStatement':
+        return [];
+      case 'DeferStatement':
+        return this.collectSuperConstructorCallsFromExpression(statement.expression);
+      case 'DoWhileStatement':
+        return [
+          ...this.collectSuperConstructorCallsFromStatement(statement.body),
+          ...this.collectSuperConstructorCallsFromExpression(statement.condition),
+        ];
+      case 'ExpressionStatement':
+        return this.collectSuperConstructorCallsFromExpression(statement.expression);
+      case 'ForStatement':
+        return [
+          ...(statement.initializer.kind === 'VariableDeclaration'
+            ? this.collectSuperConstructorCallsFromExpression(statement.initializer.initializer)
+            : this.collectSuperConstructorCallsFromExpression(statement.initializer)),
+          ...this.collectSuperConstructorCallsFromExpression(statement.condition),
+          ...this.collectSuperConstructorCallsFromExpression(statement.update),
+          ...this.collectSuperConstructorCallsFromStatement(statement.body),
+        ];
+      case 'IfStatement':
+        return [
+          ...this.collectSuperConstructorCallsFromExpression(statement.condition),
+          ...this.collectSuperConstructorCallsFromStatement(statement.thenBranch),
+          ...(statement.elseBranch === null
+            ? []
+            : statement.elseBranch.kind === 'BlockStatement'
+              ? this.collectSuperConstructorCallsFromStatement(statement.elseBranch)
+              : this.collectSuperConstructorCallsFromStatement(statement.elseBranch)),
+        ];
+      case 'MultiVariableDeclaration':
+        return this.collectSuperConstructorCallsFromExpression(statement.initializer);
+      case 'ReturnStatement':
+        return statement.values.flatMap((value: ExpressionNode): CallExpressionNode[] =>
+          this.collectSuperConstructorCallsFromExpression(value)
+        );
+      case 'VariableDeclaration':
+        return this.collectSuperConstructorCallsFromExpression(statement.initializer);
+      case 'WhileStatement':
+        return [
+          ...this.collectSuperConstructorCallsFromExpression(statement.condition),
+          ...this.collectSuperConstructorCallsFromStatement(statement.body),
+        ];
+    }
+  }
+
+  private collectSuperConstructorCallsFromExpression(expression: ExpressionNode): CallExpressionNode[] {
+    switch (expression.kind) {
+      case 'AssignmentExpression':
+        return [
+          ...this.collectSuperConstructorCallsFromExpression(expression.target),
+          ...this.collectSuperConstructorCallsFromExpression(expression.value),
+        ];
+      case 'BinaryExpression':
+        return [
+          ...this.collectSuperConstructorCallsFromExpression(expression.left),
+          ...this.collectSuperConstructorCallsFromExpression(expression.right),
+        ];
+      case 'BooleanLiteral':
+      case 'DoubleLiteral':
+      case 'IdentifierExpression':
+      case 'IntegerLiteral':
+      case 'NullLiteral':
+      case 'StringLiteral':
+      case 'SuperExpression':
+      case 'ThisExpression':
+        return [];
+      case 'CallExpression':
+        return [
+          ...(expression.callee.kind === 'SuperExpression'
+            ? [expression]
+            : this.collectSuperConstructorCallsFromExpression(expression.callee)),
+          ...expression.arguments.flatMap((argument: ExpressionNode): CallExpressionNode[] =>
+            this.collectSuperConstructorCallsFromExpression(argument)
+          ),
+        ];
+      case 'ConditionalExpression':
+        return [
+          ...this.collectSuperConstructorCallsFromExpression(expression.condition),
+          ...this.collectSuperConstructorCallsFromExpression(expression.thenExpression),
+          ...this.collectSuperConstructorCallsFromExpression(expression.elseExpression),
+        ];
+      case 'GroupingExpression':
+        return this.collectSuperConstructorCallsFromExpression(expression.expression);
+      case 'MemberExpression':
+        return this.collectSuperConstructorCallsFromExpression(expression.object);
+      case 'UnaryExpression':
+        return this.collectSuperConstructorCallsFromExpression(expression.expression);
+    }
+  }
+
   private resolveAssignmentTarget(target: IdentifierExpressionNode | MemberExpressionNode): AssignmentTarget {
     if (target.kind === 'IdentifierExpression') {
       return {
@@ -1626,9 +2161,9 @@ export class Checker {
     }
 
     const classEntry: ClassEntry = this.classes.get(targetTypeOrClass.name)!;
-    const fieldEntry: ClassFieldEntry | undefined = classEntry.fields.get(target.property.name);
+    const fieldLookup = this.findFieldEntryInHierarchy(classEntry, target.property.name);
 
-    if (fieldEntry === undefined) {
+    if (fieldLookup === null) {
       throw new CheckerError(
         `Class "${classEntry.declaration.name.name}" does not declare the field "${target.property.name}".`,
         target.property.location
@@ -1636,8 +2171,8 @@ export class Checker {
     }
 
     return {
-      classEntry,
-      fieldEntry,
+      classEntry: fieldLookup.ownerClassEntry,
+      fieldEntry: fieldLookup.fieldEntry,
       kind: 'field',
       target,
     };
@@ -1790,6 +2325,8 @@ export class Checker {
         throw new CheckerError('Null must be handled before resolving an expression type.', expression.location);
       case 'StringLiteral':
         return { kind: 'primitive', name: 'string', nullable: false };
+      case 'SuperExpression':
+        return this.resolveSuperExpressionType(expression.location);
       case 'ThisExpression':
         return this.resolveThisExpressionType(expression.location);
       case 'UnaryExpression':
@@ -2075,6 +2612,22 @@ export class Checker {
     return {
       kind: 'class',
       name: this.currentClass.declaration.name.name,
+      nullable: false,
+    };
+  }
+
+  private resolveSuperExpressionType(location: TokenLocation): ResolvedType {
+    if (this.currentClass === null || this.currentMethod === null || this.currentMethod.declaration.isStatic) {
+      throw new CheckerError('"super" can only be used inside instance methods and constructors.', location);
+    }
+
+    if (this.currentClass.baseClassName === null) {
+      throw new CheckerError('"super" can only be used inside derived classes.', location);
+    }
+
+    return {
+      kind: 'class',
+      name: this.currentClass.baseClassName,
       nullable: false,
     };
   }

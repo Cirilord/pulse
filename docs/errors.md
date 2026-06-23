@@ -19,19 +19,15 @@ This document tracks the current `throws` and error-return support in Pulse.
 ## Valid Example
 
 ```pulse
-class ParseError {
-  public val message: string;
-
+class ParseError extends Error {
   public fn constructor(val message: string) {
-    this.message = message;
+    super(message);
   }
 }
 
-class IoError {
-  public val message: string;
-
+class IoError extends Error {
   public fn constructor(val message: string) {
-    this.message = message;
+    super(message);
   }
 }
 

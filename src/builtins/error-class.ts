@@ -91,6 +91,7 @@ function createConstructor(): ClassMethodDeclarationNode {
       location: BUILTIN_LOCATION,
     },
     isConstructor: true,
+    isOverride: false,
     isStatic: false,
     kind: 'ClassMethodDeclaration',
     location: BUILTIN_LOCATION,
@@ -103,6 +104,7 @@ function createConstructor(): ClassMethodDeclarationNode {
 
 export function createBuiltinErrorClassDeclaration(): ClassDeclarationNode {
   return {
+    baseName: null,
     kind: 'ClassDeclaration',
     location: BUILTIN_LOCATION,
     members: [createMessageField(), createConstructor()],

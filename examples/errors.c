@@ -1,5 +1,7 @@
 #include <stdbool.h>
 #include <stddef.h>
+#include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 typedef struct {
@@ -23,19 +25,29 @@ static bool string_t_equal(const string_t left, const string_t right) {
 
 typedef struct {
   const char *pulse__type_name;
+} object_t;
+
+typedef struct {
+  object_t super;
   string_t message;
+} Error;
+
+typedef struct {
+  Error super;
 } ParseError;
 
 typedef struct {
-  const char *pulse__type_name;
-  string_t message;
+  Error super;
 } IoError;
 
-static const string_t ParseError__static_arg__name = STRING_LITERAL("ParseError");
+const string_t Error__static_arg__name = STRING_LITERAL("Error");
 
-static const string_t IoError__static_arg__name = STRING_LITERAL("IoError");
+const string_t ParseError__static_arg__name = STRING_LITERAL("ParseError");
+
+const string_t IoError__static_arg__name = STRING_LITERAL("IoError");
 
 typedef union {
+  Error Error_value;
   ParseError ParseError_value;
   IoError IoError_value;
 } unknown_value_t;
@@ -44,6 +56,11 @@ typedef struct {
   const char *type_name;
   unknown_value_t value;
 } unknown_t;
+
+void pulse__runtime__handle_error(const Error error) {
+  fprintf(stderr, "%.*s\n", (int)error.message.length, error.message.data);
+  exit(EXIT_FAILURE);
+}
 
 typedef struct {
   bool is_null;
@@ -65,6 +82,8 @@ typedef struct {
   unknown_t_nullable error;
 } parse__result_t;
 
+Error Error__constructor(const string_t message);
+string_t Error__static_method__toString(void);
 ParseError ParseError__constructor(const string_t message);
 string_t ParseError__static_method__toString(void);
 IoError IoError__constructor(const string_t message);
@@ -73,26 +92,39 @@ parse__result_t parse(const string_t text);
 IoError_nullable save(const string_t text);
 int main(void);
 
+Error Error__constructor(const string_t message) {
+  Error self = (Error){ 0 };
+  self.super.pulse__type_name = "Error";
+  self.message = message;
+  return self;
+}
+
+string_t Error__static_method__toString(void) {
+  return STRING_LITERAL("class Error {\n  public val message: string;\n  public fn constructor(val message: string);\n}");
+}
+
 ParseError ParseError__constructor(const string_t message) {
   ParseError self = (ParseError){ 0 };
-  self.pulse__type_name = "ParseError";
-  self.message = message;
+  self.super.super.pulse__type_name = "ParseError";
+  (self.super = Error__constructor(message));
+  self.super.super.pulse__type_name = "ParseError";
   return self;
 }
 
 string_t ParseError__static_method__toString(void) {
-  return STRING_LITERAL("class ParseError {\n  public val message: string;\n  public fn constructor(val message: string);\n}");
+  return STRING_LITERAL("class ParseError extends Error {\n  public fn constructor(val message: string);\n}");
 }
 
 IoError IoError__constructor(const string_t message) {
   IoError self = (IoError){ 0 };
-  self.pulse__type_name = "IoError";
-  self.message = message;
+  self.super.super.pulse__type_name = "IoError";
+  (self.super = Error__constructor(message));
+  self.super.super.pulse__type_name = "IoError";
   return self;
 }
 
 string_t IoError__static_method__toString(void) {
-  return STRING_LITERAL("class IoError {\n  public val message: string;\n  public fn constructor(val message: string);\n}");
+  return STRING_LITERAL("class IoError extends Error {\n  public fn constructor(val message: string);\n}");
 }
 
 parse__result_t parse(const string_t text) {
@@ -117,8 +149,8 @@ int main(void) {
   if ((!saveErr.is_null)) {
     return 2;
   }
-  if (((!err.is_null) && (!err.is_null && strcmp(err.value.type_name, "ParseError") == 0))) {
-    return ((string_t_equal(err.value.value.ParseError_value.message, STRING_LITERAL("Empty text"))) ? 1 : 3);
+  if (((!err.is_null) && (!err.is_null && (strcmp(err.value.type_name, "ParseError") == 0)))) {
+    return ((string_t_equal(err.value.value.ParseError_value.super.message, STRING_LITERAL("Empty text"))) ? 1 : 3);
   }
   return (value.is_null ? 0 : value.value);
 }

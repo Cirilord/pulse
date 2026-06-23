@@ -23,11 +23,15 @@ static bool string_t_equal(const string_t left, const string_t right) {
 
 typedef struct {
   const char *pulse__type_name;
+} object_t;
+
+typedef struct {
+  object_t super;
   string_t name;
   int age;
 } User;
 
-static const string_t User__static_arg__name = STRING_LITERAL("User");
+const string_t User__static_arg__name = STRING_LITERAL("User");
 
 User User__constructor(const string_t name, const int age);
 string_t User__static_method__toString(void);
@@ -38,7 +42,7 @@ int main(void);
 
 User User__constructor(const string_t name, const int age) {
   User self = (User){ 0 };
-  self.pulse__type_name = "User";
+  self.super.pulse__type_name = "User";
   self.name = name;
   self.age = age;
   return self;
@@ -69,7 +73,7 @@ int main(void) {
   const string_t adultName = adult.name;
   const string_t className = User__static_arg__name;
   const string_t classShape = User__static_method__toString();
-  const bool adultIsUser = (strcmp(adult.pulse__type_name, "User") == 0);
+  const bool adultIsUser = (strcmp(adult.super.pulse__type_name, "User") == 0);
   if ((((adultIsUser && (string_t_equal(adultName, STRING_LITERAL("Bob")))) && (string_t_equal(className, STRING_LITERAL("User")))) && (string_t_equal(classShape, STRING_LITERAL("")) == false))) {
     return age;
   }

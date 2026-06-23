@@ -9,6 +9,7 @@ export type ClassMethodDeclarationNode = BaseNode & {
   access: AccessModifier;
   body: BlockStatementNode;
   isConstructor: boolean;
+  isOverride: boolean;
   isStatic: boolean;
   kind: 'ClassMethodDeclaration';
   name: IdentifierNode;

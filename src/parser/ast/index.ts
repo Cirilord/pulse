@@ -24,6 +24,7 @@ export type {
   MemberExpressionNode,
   NullLiteralNode,
   StringLiteralNode,
+  SuperExpressionNode,
   ThisExpressionNode,
   UnaryExpressionNode,
   UnaryOperator,

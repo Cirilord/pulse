@@ -42,6 +42,7 @@ type ClassMethodCodegenEntry = {
 };
 
 type ClassCodegenEntry = {
+  baseClassName: string | null;
   constructorMethod: ClassMethodCodegenEntry | null;
   declaration: ClassDeclarationNode;
   fields: Map<string, ClassFieldDeclarationNode>;
@@ -155,6 +156,13 @@ export class CGenerator {
       lines.push('');
     }
 
+    if (this.classes.size > 0) {
+      lines.push('typedef struct {');
+      lines.push('  const char *pulse__type_name;');
+      lines.push('} object_t;');
+      lines.push('');
+    }
+
     this.emitClassDefinitions(lines);
     this.emitBuiltinClassMembers(lines);
 
@@ -179,6 +187,7 @@ export class CGenerator {
       const errorClassDeclaration: ClassDeclarationNode = createBuiltinErrorClassDeclaration();
 
       this.classes.set(BUILTIN_ERROR_CLASS_NAME, {
+        baseClassName: null,
         constructorMethod: {
           declaration: errorClassDeclaration.members[1] as ClassMethodDeclarationNode,
           mutatesThis: true,
@@ -220,6 +229,7 @@ export class CGenerator {
       }
 
       this.classes.set(topLevel.name.name, {
+        baseClassName: topLevel.baseName?.name ?? null,
         constructorMethod,
         declaration: topLevel,
         fields,
@@ -354,9 +364,14 @@ export class CGenerator {
   }
 
   private emitClassDefinitions(lines: string[]): void {
-    for (const classEntry of this.classes.values()) {
+    for (const classEntry of this.getClassEntriesInDependencyOrder()) {
       lines.push('typedef struct {');
-      lines.push('  const char *pulse__type_name;');
+
+      if (classEntry.baseClassName === null) {
+        lines.push('  object_t super;');
+      } else {
+        lines.push(`  ${classEntry.baseClassName} super;`);
+      }
 
       for (const field of classEntry.fields.values()) {
         lines.push(`  ${this.generateType(field.type, 'var')} ${field.name.name};`);
@@ -368,9 +383,9 @@ export class CGenerator {
   }
 
   private emitBuiltinClassMembers(lines: string[]): void {
-    for (const classEntry of this.classes.values()) {
+    for (const classEntry of this.getClassEntriesInDependencyOrder()) {
       lines.push(
-        `static const string_t ${this.generateBuiltinClassNameSymbol(classEntry.declaration.name.name)} = STRING_LITERAL(${JSON.stringify(classEntry.declaration.name.name)});`
+        `const string_t ${this.generateBuiltinClassNameSymbol(classEntry.declaration.name.name)} = STRING_LITERAL(${JSON.stringify(classEntry.declaration.name.name)});`
       );
       lines.push('');
     }
@@ -381,7 +396,8 @@ export class CGenerator {
       return `${member.access} ${member.mutability} ${member.name.name}: ${this.stringifyTypeNode(member.type)};`;
     }
 
-    const prefix: string = member.isStatic ? `${member.access} static fn` : `${member.access} fn`;
+    const overridePrefix: string = member.isOverride ? ' override' : '';
+    const prefix: string = member.isStatic ? `${member.access} static fn` : `${member.access}${overridePrefix} fn`;
     const parameters: string = member.parameters
       .map(
         (parameter: FunctionParameterNode): string =>
@@ -397,7 +413,11 @@ export class CGenerator {
   }
 
   private generateClassShapeLiteral(classEntry: ClassCodegenEntry): string {
-    const lines: string[] = [`class ${classEntry.declaration.name.name} {`];
+    const headerLine: string =
+      classEntry.baseClassName === null
+        ? `class ${classEntry.declaration.name.name} {`
+        : `class ${classEntry.declaration.name.name} extends ${classEntry.baseClassName} {`;
+    const lines: string[] = [headerLine];
 
     for (const member of classEntry.declaration.members) {
       lines.push(`  ${this.generateClassMemberShape(member)}`);
@@ -409,7 +429,7 @@ export class CGenerator {
   }
 
   private emitImplementations(program: ProgramNode, lines: string[]): void {
-    for (const classEntry of this.classes.values()) {
+    for (const classEntry of this.getClassEntriesInDependencyOrder()) {
       if (classEntry.constructorMethod !== null) {
         lines.push(...this.generateClassMethodDeclaration(classEntry, classEntry.constructorMethod));
         lines.push('');
@@ -439,7 +459,7 @@ export class CGenerator {
   }
 
   private emitThrowingResultDefinitions(program: ProgramNode, lines: string[]): void {
-    for (const classEntry of this.classes.values()) {
+    for (const classEntry of this.getClassEntriesInDependencyOrder()) {
       if (
         classEntry.constructorMethod !== null &&
         this.callableReturnsResultStruct(classEntry.constructorMethod.declaration)
@@ -508,7 +528,7 @@ export class CGenerator {
   private emitPrototypes(program: ProgramNode, lines: string[]): void {
     const prototypes: string[] = [];
 
-    for (const classEntry of this.classes.values()) {
+    for (const classEntry of this.getClassEntriesInDependencyOrder()) {
       if (classEntry.constructorMethod !== null) {
         prototypes.push(this.generateClassMethodPrototype(classEntry, classEntry.constructorMethod));
       }
@@ -564,23 +584,10 @@ export class CGenerator {
       case 'IntegerLiteral':
       case 'NullLiteral':
       case 'StringLiteral':
+      case 'SuperExpression':
       case 'ThisExpression':
         return false;
     }
-  }
-
-  private generateAddressableObjectExpression(expression: ExpressionNode): string {
-    if (expression.kind === 'ThisExpression') {
-      return 'self';
-    }
-
-    const objectExpression: string = this.generateExpression(expression);
-
-    if (expression.kind === 'IdentifierExpression') {
-      return `&${objectExpression}`;
-    }
-
-    return `&(${objectExpression})`;
   }
 
   private generateAssignedValue(type: TypeNode, expression: ExpressionNode): string {
@@ -623,6 +630,36 @@ export class CGenerator {
   }
 
   private generateCallExpression(expression: CallExpressionNode): string {
+    if (expression.callee.kind === 'SuperExpression') {
+      if (
+        this.currentClass === null ||
+        this.currentClass.baseClassName === null ||
+        this.currentMethod === null ||
+        !this.currentMethod.declaration.isConstructor
+      ) {
+        throw new CGeneratorError(
+          '"super(...)" is only available inside derived class constructors.',
+          expression.location
+        );
+      }
+
+      const baseClassEntry: ClassCodegenEntry | undefined = this.classes.get(this.currentClass.baseClassName);
+
+      if (baseClassEntry === undefined || baseClassEntry.constructorMethod === null) {
+        throw new CGeneratorError(
+          `Base class "${this.currentClass.baseClassName}" does not declare a constructor.`,
+          expression.location
+        );
+      }
+
+      const argumentsList: string = this.generateCallArguments(
+        expression.arguments,
+        baseClassEntry.constructorMethod.declaration.parameters
+      );
+
+      return `(self.super = ${baseClassEntry.declaration.name.name}__constructor(${argumentsList}))`;
+    }
+
     if (expression.callee.kind === 'IdentifierExpression') {
       if (expression.callee.name === 'isInstance') {
         const classNameArgument: string | null = this.resolveClassReferenceName(expression.arguments[1]!);
@@ -688,10 +725,9 @@ export class CGenerator {
         return `${classReferenceName}__static_method__toString()`;
       }
 
-      const classEntry: ClassCodegenEntry = this.classes.get(classReferenceName)!;
-      const methodEntry: ClassMethodCodegenEntry | undefined = classEntry.methods.get(expression.callee.property.name);
+      const methodLookup = this.findMethodInHierarchy(classReferenceName, expression.callee.property.name);
 
-      if (methodEntry === undefined) {
+      if (methodLookup === null) {
         throw new CGeneratorError(
           `Unknown static method "${expression.callee.property.name}".`,
           expression.callee.property.location
@@ -700,28 +736,34 @@ export class CGenerator {
 
       const argumentsList: string = this.generateCallArguments(
         expression.arguments,
-        methodEntry.declaration.parameters
+        methodLookup.methodEntry.declaration.parameters
       );
 
-      return `${classReferenceName}__static_method__${expression.callee.property.name}(${argumentsList})`;
+      return `${methodLookup.ownerClassName}__static_method__${expression.callee.property.name}(${argumentsList})`;
     }
 
     const instanceTypeName: string = this.resolveClassTypeName(this.resolveExpressionType(expression.callee.object));
-    const classEntry: ClassCodegenEntry = this.classes.get(instanceTypeName)!;
-    const methodEntry: ClassMethodCodegenEntry | undefined = classEntry.methods.get(expression.callee.property.name);
+    const methodLookup = this.findMethodInHierarchy(instanceTypeName, expression.callee.property.name);
 
-    if (methodEntry === undefined) {
+    if (methodLookup === null) {
       throw new CGeneratorError(
         `Unknown instance method "${expression.callee.property.name}".`,
         expression.callee.property.location
       );
     }
 
-    const receiver: string = this.generateAddressableObjectExpression(expression.callee.object);
-    const argumentsList: string = this.generateCallArguments(expression.arguments, methodEntry.declaration.parameters);
+    const receiver: string = this.generateAddressableClassSubview(
+      expression.callee.object,
+      instanceTypeName,
+      methodLookup.ownerClassName
+    );
+    const argumentsList: string = this.generateCallArguments(
+      expression.arguments,
+      methodLookup.methodEntry.declaration.parameters
+    );
     const joinedArguments: string = argumentsList.length === 0 ? receiver : `${receiver}, ${argumentsList}`;
 
-    return `${instanceTypeName}__method__${expression.callee.property.name}(${joinedArguments})`;
+    return `${methodLookup.ownerClassName}__method__${expression.callee.property.name}(${joinedArguments})`;
   }
 
   private generateCallArguments(argumentsList: ExpressionNode[], parameters: FunctionParameterNode[]): string {
@@ -764,7 +806,9 @@ export class CGenerator {
       lines.push(
         `${this.indent(1)}${classEntry.declaration.name.name} self = (${classEntry.declaration.name.name}){ 0 };`
       );
-      lines.push(`${this.indent(1)}self.pulse__type_name = "${classEntry.declaration.name.name}";`);
+      lines.push(
+        `${this.indent(1)}self.${this.getClassRuntimeTypePath(classEntry.declaration.name.name)} = "${classEntry.declaration.name.name}";`
+      );
     }
 
     let exitedEarly: boolean = false;
@@ -783,6 +827,12 @@ export class CGenerator {
     }
 
     if (methodEntry.declaration.isConstructor) {
+      if (classEntry.baseClassName !== null) {
+        lines.push(
+          `${this.indent(1)}self.${this.getClassRuntimeTypePath(classEntry.declaration.name.name)} = "${classEntry.declaration.name.name}";`
+        );
+      }
+
       lines.push(`${this.indent(1)}return self;`);
     }
 
@@ -810,6 +860,150 @@ export class CGenerator {
 
   private generateBuiltinClassNameSymbol(className: string): string {
     return `${className}__static_arg__name`;
+  }
+
+  private findFieldInHierarchy(
+    className: string,
+    fieldName: string
+  ): { fieldEntry: ClassFieldDeclarationNode; ownerClassName: string } | null {
+    let currentClassEntry: ClassCodegenEntry | undefined = this.classes.get(className);
+
+    while (currentClassEntry !== undefined) {
+      const fieldEntry: ClassFieldDeclarationNode | undefined = currentClassEntry.fields.get(fieldName);
+
+      if (fieldEntry !== undefined) {
+        return {
+          fieldEntry,
+          ownerClassName: currentClassEntry.declaration.name.name,
+        };
+      }
+
+      currentClassEntry =
+        currentClassEntry.baseClassName === null ? undefined : this.classes.get(currentClassEntry.baseClassName);
+    }
+
+    return null;
+  }
+
+  private findMethodInHierarchy(
+    className: string,
+    methodName: string
+  ): { methodEntry: ClassMethodCodegenEntry; ownerClassName: string } | null {
+    let currentClassEntry: ClassCodegenEntry | undefined = this.classes.get(className);
+
+    while (currentClassEntry !== undefined) {
+      const methodEntry: ClassMethodCodegenEntry | undefined = currentClassEntry.methods.get(methodName);
+
+      if (methodEntry !== undefined) {
+        return {
+          methodEntry,
+          ownerClassName: currentClassEntry.declaration.name.name,
+        };
+      }
+
+      currentClassEntry =
+        currentClassEntry.baseClassName === null ? undefined : this.classes.get(currentClassEntry.baseClassName);
+    }
+
+    return null;
+  }
+
+  private getClassPathToAncestor(className: string, ancestorClassName: string): string[] {
+    if (className === ancestorClassName) {
+      return [];
+    }
+
+    const pathSegments: string[] = [];
+    let currentClassEntry: ClassCodegenEntry | undefined = this.classes.get(className);
+
+    while (currentClassEntry !== undefined && currentClassEntry.declaration.name.name !== ancestorClassName) {
+      if (currentClassEntry.baseClassName === null) {
+        throw new CGeneratorError(
+          `Class "${className}" does not inherit from "${ancestorClassName}".`,
+          currentClassEntry.declaration.location
+        );
+      }
+
+      pathSegments.push('super');
+      currentClassEntry = this.classes.get(currentClassEntry.baseClassName);
+    }
+
+    if (currentClassEntry === undefined) {
+      throw new Error(`Unknown class "${className}" in C generator.`);
+    }
+
+    return pathSegments;
+  }
+
+  private getClassRuntimeTypePath(className: string): string {
+    const currentClassEntry: ClassCodegenEntry | undefined = this.classes.get(className);
+
+    if (currentClassEntry === undefined) {
+      throw new Error(`Unknown class "${className}" in C generator.`);
+    }
+
+    if (currentClassEntry.baseClassName === null) {
+      return 'super.pulse__type_name';
+    }
+
+    return `${this.getClassPathToAncestor(className, this.getRootClassName(className)).join('.')}.super.pulse__type_name`;
+  }
+
+  private getRootClassName(className: string): string {
+    let currentClassEntry: ClassCodegenEntry | undefined = this.classes.get(className);
+
+    if (currentClassEntry === undefined) {
+      throw new Error(`Unknown class "${className}" in C generator.`);
+    }
+
+    while (currentClassEntry.baseClassName !== null) {
+      currentClassEntry = this.classes.get(currentClassEntry.baseClassName)!;
+    }
+
+    return currentClassEntry.declaration.name.name;
+  }
+
+  private getClassEntriesInDependencyOrder(): ClassCodegenEntry[] {
+    const orderedEntries: ClassCodegenEntry[] = [];
+    const visitedClassNames: Set<string> = new Set<string>();
+
+    const visitClass = (classEntry: ClassCodegenEntry): void => {
+      if (visitedClassNames.has(classEntry.declaration.name.name)) {
+        return;
+      }
+
+      if (classEntry.baseClassName !== null) {
+        visitClass(this.classes.get(classEntry.baseClassName)!);
+      }
+
+      visitedClassNames.add(classEntry.declaration.name.name);
+      orderedEntries.push(classEntry);
+    };
+
+    for (const classEntry of this.classes.values()) {
+      visitClass(classEntry);
+    }
+
+    return orderedEntries;
+  }
+
+  private getClassAndDescendantNames(className: string): string[] {
+    const names: string[] = [className];
+
+    for (const classEntry of this.classes.values()) {
+      let currentBaseClassName: string | null = classEntry.baseClassName;
+
+      while (currentBaseClassName !== null) {
+        if (currentBaseClassName === className) {
+          names.push(classEntry.declaration.name.name);
+          break;
+        }
+
+        currentBaseClassName = this.classes.get(currentBaseClassName)?.baseClassName ?? null;
+      }
+    }
+
+    return names;
   }
 
   private getCallableResultTypeName(
@@ -1046,7 +1240,13 @@ export class CGenerator {
       case 'NullLiteral':
         throw new CGeneratorError('Null literals must be emitted in a nullable context.', expression.location);
       case 'StringLiteral':
-        return JSON.stringify(expression.value);
+        return `STRING_LITERAL(${JSON.stringify(expression.value)})`;
+      case 'SuperExpression':
+        if (this.currentClass === null || this.currentClass.baseClassName === null) {
+          throw new CGeneratorError('"super" is only available inside derived classes.', expression.location);
+        }
+
+        return this.currentMethod?.declaration.isConstructor ? 'self.super' : 'self->super';
       case 'ThisExpression':
         return '(*self)';
       case 'UnaryExpression':
@@ -1058,13 +1258,54 @@ export class CGenerator {
     return `${this.generateExpression(statement.expression)};`;
   }
 
-  private generateFieldAccess(expression: MemberExpressionNode): string {
-    if (expression.object.kind === 'ThisExpression') {
+  private generateAddressableClassSubview(
+    expression: ExpressionNode,
+    sourceClassName: string,
+    targetClassName: string
+  ): string {
+    if (expression.kind === 'ThisExpression') {
+      const pathSegments: string[] = this.getClassPathToAncestor(sourceClassName, targetClassName);
+
+      if (pathSegments.length === 0) {
+        return this.currentMethod?.declaration.isConstructor ? '&self' : 'self';
+      }
+
       return this.currentMethod?.declaration.isConstructor
-        ? `self.${expression.property.name}`
-        : `self->${expression.property.name}`;
+        ? `&(self.${pathSegments.join('.')})`
+        : `&(self->${pathSegments.join('.')})`;
     }
 
+    if (expression.kind === 'SuperExpression') {
+      const pathSegments: string[] = this.getClassPathToAncestor(sourceClassName, targetClassName);
+
+      if (pathSegments.length === 0) {
+        return this.currentMethod?.declaration.isConstructor ? '&self.super' : '&self->super';
+      }
+
+      return this.currentMethod?.declaration.isConstructor
+        ? `&(self.super.${pathSegments.join('.')})`
+        : `&(self->super.${pathSegments.join('.')})`;
+    }
+
+    const objectExpression: string = this.generateExpression(expression);
+    const pathSegments: string[] = this.getClassPathToAncestor(sourceClassName, targetClassName);
+
+    if (expression.kind === 'IdentifierExpression') {
+      if (pathSegments.length === 0) {
+        return `&${objectExpression}`;
+      }
+
+      return `&${objectExpression}.${pathSegments.join('.')}`;
+    }
+
+    if (pathSegments.length === 0) {
+      return `&(${objectExpression})`;
+    }
+
+    return `&((${objectExpression}).${pathSegments.join('.')})`;
+  }
+
+  private generateFieldAccess(expression: MemberExpressionNode): string {
     const classReferenceName: string | null = this.resolveClassReferenceName(expression.object);
 
     if (classReferenceName !== null) {
@@ -1082,6 +1323,31 @@ export class CGenerator {
       );
     }
 
+    const objectType: TypeNode = this.resolveExpressionType(expression.object);
+    const classTypeName: string = this.resolveClassTypeName(objectType);
+    const fieldLookup = this.findFieldInHierarchy(classTypeName, expression.property.name);
+
+    if (fieldLookup === null) {
+      throw new CGeneratorError(
+        `Unknown field "${expression.property.name}" on "${classTypeName}".`,
+        expression.property.location
+      );
+    }
+
+    if (expression.object.kind === 'ThisExpression') {
+      const pathSegments: string[] = this.getClassPathToAncestor(classTypeName, fieldLookup.ownerClassName);
+
+      if (pathSegments.length === 0) {
+        return this.currentMethod?.declaration.isConstructor
+          ? `self.${expression.property.name}`
+          : `self->${expression.property.name}`;
+      }
+
+      return this.currentMethod?.declaration.isConstructor
+        ? `self.${pathSegments.join('.')}.${expression.property.name}`
+        : `self->${pathSegments.join('.')}.${expression.property.name}`;
+    }
+
     const objectExpression: string = this.generateExpression(expression.object);
 
     if (expression.object.kind === 'IdentifierExpression') {
@@ -1095,7 +1361,9 @@ export class CGenerator {
         effectiveType.kind === 'NamedType' &&
         !this.isPrimitiveTypeName(effectiveType.name)
       ) {
-        return `${objectExpression}.value.value.${effectiveType.name}_value.${expression.property.name}`;
+        const pathSegments: string[] = this.getClassPathToAncestor(effectiveType.name, fieldLookup.ownerClassName);
+        const inheritedPath: string = pathSegments.length === 0 ? '' : `${pathSegments.join('.')}.`;
+        return `${objectExpression}.value.value.${effectiveType.name}_value.${inheritedPath}${expression.property.name}`;
       }
 
       if (
@@ -1104,44 +1372,70 @@ export class CGenerator {
         effectiveType.kind === 'NamedType' &&
         !this.isPrimitiveTypeName(effectiveType.name)
       ) {
-        return `${objectExpression}.value.${effectiveType.name}_value.${expression.property.name}`;
+        const pathSegments: string[] = this.getClassPathToAncestor(effectiveType.name, fieldLookup.ownerClassName);
+        const inheritedPath: string = pathSegments.length === 0 ? '' : `${pathSegments.join('.')}.`;
+        return `${objectExpression}.value.${effectiveType.name}_value.${inheritedPath}${expression.property.name}`;
       }
-
-      return `${objectExpression}.${expression.property.name}`;
     }
 
-    return `(${objectExpression}).${expression.property.name}`;
+    const pathSegments: string[] = this.getClassPathToAncestor(classTypeName, fieldLookup.ownerClassName);
+    const inheritedPath: string = pathSegments.length === 0 ? '' : `${pathSegments.join('.')}.`;
+
+    if (expression.object.kind === 'IdentifierExpression') {
+      return `${objectExpression}.${inheritedPath}${expression.property.name}`;
+    }
+
+    return `(${objectExpression}).${inheritedPath}${expression.property.name}`;
   }
 
   private generateIsInstanceExpression(expression: ExpressionNode, className: string): string {
     const expressionType: TypeNode = this.resolveExpressionType(expression);
     const generatedExpression: string = this.generateExpression(expression);
+    const acceptedClassNames: string[] = this.getClassAndDescendantNames(className);
+    const predicate = (typeNameExpression: string): string =>
+      acceptedClassNames
+        .map((acceptedClassName: string): string => `strcmp(${typeNameExpression}, "${acceptedClassName}") == 0`)
+        .join(' || ');
 
     if (expressionType.kind === 'NullableType') {
       if (expressionType.type.name === 'unknown') {
-        return `(!${generatedExpression}.is_null && strcmp(${generatedExpression}.value.type_name, "${className}") == 0)`;
+        return `(!${generatedExpression}.is_null && (${predicate(`${generatedExpression}.value.type_name`)}))`;
       }
 
-      return `(!${generatedExpression}.is_null && strcmp(${generatedExpression}.value.pulse__type_name, "${className}") == 0)`;
+      return `(!${generatedExpression}.is_null && (${predicate(this.generateTypeNameAccess(expression))}))`;
     }
 
     if (expressionType.name === 'unknown') {
-      return `(strcmp(${generatedExpression}.type_name, "${className}") == 0)`;
+      return `(${predicate(`${generatedExpression}.type_name`)})`;
     }
 
-    return `(strcmp(${this.generateTypeNameAccess(expression)}, "${className}") == 0)`;
+    return `(${predicate(this.generateTypeNameAccess(expression))})`;
   }
 
   private generateTypeNameAccess(expression: ExpressionNode): string {
     if (expression.kind === 'ThisExpression') {
-      return this.currentMethod?.declaration.isConstructor ? 'self.pulse__type_name' : 'self->pulse__type_name';
+      const className: string = this.currentClass!.declaration.name.name;
+      const runtimeTypePath: string = this.getClassRuntimeTypePath(className);
+
+      return this.currentMethod?.declaration.isConstructor ? `self.${runtimeTypePath}` : `self->${runtimeTypePath}`;
+    }
+
+    if (expression.kind === 'SuperExpression') {
+      const className: string = this.currentClass!.baseClassName!;
+      const runtimeTypePath: string = this.getClassRuntimeTypePath(className);
+
+      return this.currentMethod?.declaration.isConstructor
+        ? `self.super.${runtimeTypePath}`
+        : `self->super.${runtimeTypePath}`;
     }
 
     if (expression.kind === 'IdentifierExpression') {
-      return `${expression.name}.pulse__type_name`;
+      const className: string = this.resolveClassTypeName(this.resolveExpressionType(expression));
+      return `${expression.name}.${this.getClassRuntimeTypePath(className)}`;
     }
 
-    return `(${this.generateExpression(expression)}).pulse__type_name`;
+    const className: string = this.resolveClassTypeName(this.resolveExpressionType(expression));
+    return `(${this.generateExpression(expression)}).${this.getClassRuntimeTypePath(className)}`;
   }
 
   private generateForInitializer(initializer: ForInitializerNode): string {
@@ -1277,10 +1571,6 @@ export class CGenerator {
   }
 
   private generateNonNullableValue(typeName: string, expression: ExpressionNode): string {
-    if (typeName === 'string' && expression.kind === 'StringLiteral') {
-      return `STRING_LITERAL(${this.generateExpression(expression)})`;
-    }
-
     if (typeName === 'char' && expression.kind === 'StringLiteral') {
       return `'${expression.value}'`;
     }
@@ -1768,7 +2058,10 @@ export class CGenerator {
     const expressionMutatesThis = (expression: ExpressionNode): boolean => {
       switch (expression.kind) {
         case 'AssignmentExpression':
-          return expression.target.kind === 'MemberExpression' && expression.target.object.kind === 'ThisExpression';
+          return (
+            expression.target.kind === 'MemberExpression' &&
+            (expression.target.object.kind === 'ThisExpression' || expression.target.object.kind === 'SuperExpression')
+          );
         case 'BinaryExpression':
           return expressionMutatesThis(expression.left) || expressionMutatesThis(expression.right);
         case 'CallExpression':
@@ -1789,6 +2082,7 @@ export class CGenerator {
         case 'IntegerLiteral':
         case 'NullLiteral':
         case 'StringLiteral':
+        case 'SuperExpression':
         case 'ThisExpression':
           return false;
       }
@@ -2055,6 +2349,16 @@ export class CGenerator {
         throw new CGeneratorError('Null literals cannot be resolved without context.', expression.location);
       case 'StringLiteral':
         return { kind: 'NamedType', location: expression.location, name: 'string' };
+      case 'SuperExpression':
+        if (this.currentClass === null || this.currentClass.baseClassName === null) {
+          throw new CGeneratorError('"super" is only available inside derived classes.', expression.location);
+        }
+
+        return {
+          kind: 'NamedType',
+          location: expression.location,
+          name: this.currentClass.baseClassName,
+        };
       case 'ThisExpression':
         if (this.currentClass === null) {
           throw new CGeneratorError('"this" is only available inside class methods.', expression.location);
@@ -2094,17 +2398,16 @@ export class CGenerator {
 
     const objectType: TypeNode = this.resolveExpressionType(expression.object);
     const classTypeName: string = this.resolveClassTypeName(objectType);
-    const classEntry: ClassCodegenEntry | undefined = this.classes.get(classTypeName);
-    const fieldEntry: ClassFieldDeclarationNode | undefined = classEntry?.fields.get(expression.property.name);
+    const fieldLookup = this.findFieldInHierarchy(classTypeName, expression.property.name);
 
-    if (fieldEntry === undefined) {
+    if (fieldLookup === null) {
       throw new CGeneratorError(
         `Unknown field "${expression.property.name}" on "${classTypeName}".`,
         expression.property.location
       );
     }
 
-    return fieldEntry.type;
+    return fieldLookup.fieldEntry.type;
   }
 
   private resolveIdentifierOrClassType(expression: ExpressionNode & { kind: 'IdentifierExpression' }): TypeNode {
@@ -2156,28 +2459,24 @@ export class CGenerator {
           return { kind: 'NamedType', location: expression.location, name: 'string' };
         }
 
-        const classEntry: ClassCodegenEntry = this.classes.get(classReferenceName)!;
-        const methodEntry: ClassMethodCodegenEntry | undefined = classEntry.methods.get(
-          expression.callee.property.name
-        );
+        const methodLookup = this.findMethodInHierarchy(classReferenceName, expression.callee.property.name);
 
-        if (methodEntry === undefined || methodEntry.declaration.returnType === null) {
+        if (methodLookup === null || methodLookup.methodEntry.declaration.returnType === null) {
           throw new CGeneratorError('Unknown static method.', expression.callee.property.location);
         }
 
-        return methodEntry.declaration.returnType;
+        return methodLookup.methodEntry.declaration.returnType;
       }
 
       const objectType: TypeNode = this.resolveExpressionType(expression.callee.object);
       const classTypeName: string = this.resolveClassTypeName(objectType);
-      const classEntry: ClassCodegenEntry = this.classes.get(classTypeName)!;
-      const methodEntry: ClassMethodCodegenEntry | undefined = classEntry.methods.get(expression.callee.property.name);
+      const methodLookup = this.findMethodInHierarchy(classTypeName, expression.callee.property.name);
 
-      if (methodEntry === undefined || methodEntry.declaration.returnType === null) {
+      if (methodLookup === null || methodLookup.methodEntry.declaration.returnType === null) {
         throw new CGeneratorError('Unknown instance method.', expression.callee.property.location);
       }
 
-      return methodEntry.declaration.returnType;
+      return methodLookup.methodEntry.declaration.returnType;
     }
 
     throw new CGeneratorError('Only named calls are supported.', expression.callee.location);
@@ -2196,23 +2495,19 @@ export class CGenerator {
       const classReferenceName: string | null = this.resolveClassReferenceName(expression.callee.object);
 
       if (classReferenceName !== null) {
-        const classEntry: ClassCodegenEntry = this.classes.get(classReferenceName)!;
-        const methodEntry: ClassMethodCodegenEntry | undefined = classEntry.methods.get(
-          expression.callee.property.name
-        );
+        const methodLookup = this.findMethodInHierarchy(classReferenceName, expression.callee.property.name);
 
-        if (methodEntry !== undefined) {
-          return this.generateCallableCType(classReferenceName, methodEntry.declaration);
+        if (methodLookup !== null) {
+          return this.generateCallableCType(methodLookup.ownerClassName, methodLookup.methodEntry.declaration);
         }
       }
 
       const objectType: TypeNode = this.resolveExpressionType(expression.callee.object);
       const classTypeName: string = this.resolveClassTypeName(objectType);
-      const classEntry: ClassCodegenEntry = this.classes.get(classTypeName)!;
-      const methodEntry: ClassMethodCodegenEntry | undefined = classEntry.methods.get(expression.callee.property.name);
+      const methodLookup = this.findMethodInHierarchy(classTypeName, expression.callee.property.name);
 
-      if (methodEntry !== undefined) {
-        return this.generateCallableCType(classTypeName, methodEntry.declaration);
+      if (methodLookup !== null) {
+        return this.generateCallableCType(methodLookup.ownerClassName, methodLookup.methodEntry.declaration);
       }
     }
 
@@ -2234,13 +2529,10 @@ export class CGenerator {
       const classReferenceName: string | null = this.resolveClassReferenceName(expression.callee.object);
 
       if (classReferenceName !== null) {
-        const classEntry: ClassCodegenEntry = this.classes.get(classReferenceName)!;
-        const methodEntry: ClassMethodCodegenEntry | undefined = classEntry.methods.get(
-          expression.callee.property.name
-        );
+        const methodLookup = this.findMethodInHierarchy(classReferenceName, expression.callee.property.name);
 
-        if (methodEntry !== undefined && methodEntry.declaration.throws.length > 0) {
-          return methodEntry.declaration.returnType;
+        if (methodLookup !== null && methodLookup.methodEntry.declaration.throws.length > 0) {
+          return methodLookup.methodEntry.declaration.returnType;
         }
 
         return null;
@@ -2248,11 +2540,10 @@ export class CGenerator {
 
       const objectType: TypeNode = this.resolveExpressionType(expression.callee.object);
       const classTypeName: string = this.resolveClassTypeName(objectType);
-      const classEntry: ClassCodegenEntry = this.classes.get(classTypeName)!;
-      const methodEntry: ClassMethodCodegenEntry | undefined = classEntry.methods.get(expression.callee.property.name);
+      const methodLookup = this.findMethodInHierarchy(classTypeName, expression.callee.property.name);
 
-      if (methodEntry !== undefined && methodEntry.declaration.throws.length > 0) {
-        return methodEntry.declaration.returnType;
+      if (methodLookup !== null && methodLookup.methodEntry.declaration.throws.length > 0) {
+        return methodLookup.methodEntry.declaration.returnType;
       }
     }
 
@@ -2675,6 +2966,7 @@ export class CGenerator {
         case 'IntegerLiteral':
         case 'NullLiteral':
         case 'StringLiteral':
+        case 'SuperExpression':
         case 'ThisExpression':
           return false;
         case 'CallExpression':
@@ -2748,6 +3040,10 @@ export class CGenerator {
 
     return program.body.some((topLevel: TopLevelNode): boolean => {
       if (topLevel.kind === 'ClassDeclaration') {
+        if (topLevel.baseName?.name === BUILTIN_ERROR_CLASS_NAME) {
+          return true;
+        }
+
         return topLevel.members.some((member): boolean => {
           if (member.kind === 'ClassFieldDeclaration') {
             return this.typeUsesBuiltinError(member.type);
@@ -2862,6 +3158,7 @@ export class CGenerator {
         case 'IntegerLiteral':
         case 'NullLiteral':
         case 'StringLiteral':
+        case 'SuperExpression':
         case 'ThisExpression':
           return false;
         case 'CallExpression':

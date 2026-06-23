@@ -113,6 +113,10 @@ export type StringLiteralNode = BaseNode & {
   value: string;
 };
 
+export type SuperExpressionNode = BaseNode & {
+  kind: 'SuperExpression';
+};
+
 export type ThisExpressionNode = BaseNode & {
   kind: 'ThisExpression';
 };
@@ -130,5 +134,6 @@ export type ExpressionNode =
   | MemberExpressionNode
   | NullLiteralNode
   | StringLiteralNode
+  | SuperExpressionNode
   | ThisExpressionNode
   | UnaryExpressionNode;

@@ -32,6 +32,7 @@ import type {
   ProgramNode,
   ReturnStatementNode,
   StatementNode,
+  SuperExpressionNode,
   TopLevelNode,
   TypeNode,
   AccessModifier,
@@ -420,6 +421,12 @@ export class Parser {
   private parseClassDeclaration(keywordToken: Token): ClassDeclarationNode {
     const nameToken: Token = this.consume(TokenType.Identifier, 'Expected a class name.');
     const name: IdentifierNode = this.createIdentifierNode(nameToken);
+    let baseName: IdentifierNode | null = null;
+
+    if (this.match(TokenType.Extends)) {
+      const baseNameToken: Token = this.consume(TokenType.Identifier, 'Expected a base class name after "extends".');
+      baseName = this.createIdentifierNode(baseNameToken);
+    }
 
     this.consume(TokenType.LeftBrace, 'Expected "{" after the class name.');
 
@@ -432,6 +439,7 @@ export class Parser {
     const rightBraceToken: Token = this.consume(TokenType.RightBrace, 'Expected "}" after the class body.');
 
     return {
+      baseName,
       kind: 'ClassDeclaration',
       location: this.mergeLocations(keywordToken.location, rightBraceToken.location),
       members,
@@ -461,8 +469,13 @@ export class Parser {
   private parseClassMemberDeclaration(): ClassFieldDeclarationNode | ClassMethodDeclarationNode {
     const access: AccessModifier = this.parseAccessModifier();
     const isStatic: boolean = this.match(TokenType.Static);
+    const isOverride: boolean = this.match(TokenType.Override);
 
     if (this.match(TokenType.Var, TokenType.Val)) {
+      if (isOverride) {
+        throw new ParserError('Fields cannot use the "override" modifier.', this.previous().location);
+      }
+
       if (isStatic) {
         throw new ParserError('Static fields are not supported yet.', this.previous().location);
       }
@@ -472,10 +485,14 @@ export class Parser {
 
     this.consume(TokenType.Fn, 'Expected "fn" before the class method declaration.');
 
-    return this.parseClassMethodDeclaration(access, isStatic);
+    return this.parseClassMethodDeclaration(access, isStatic, isOverride);
   }
 
-  private parseClassMethodDeclaration(access: AccessModifier, isStatic: boolean): ClassMethodDeclarationNode {
+  private parseClassMethodDeclaration(
+    access: AccessModifier,
+    isStatic: boolean,
+    isOverride: boolean
+  ): ClassMethodDeclarationNode {
     const nameToken: Token = this.match(TokenType.Constructor)
       ? this.previous()
       : this.consume(TokenType.Identifier, 'Expected a method name.');
@@ -505,6 +522,7 @@ export class Parser {
       access,
       body,
       isConstructor,
+      isOverride,
       isStatic,
       kind: 'ClassMethodDeclaration',
       location: this.mergeLocations(name.location, body.location),
@@ -881,6 +899,36 @@ export class Parser {
   }
 
   private parsePrimaryExpression(): ExpressionNode {
+    if (this.match(TokenType.Super)) {
+      const token: Token = this.previous();
+      let expression: ExpressionNode = {
+        kind: 'SuperExpression',
+        location: token.location,
+      } satisfies SuperExpressionNode;
+
+      while (true) {
+        if (this.match(TokenType.LeftParen)) {
+          expression = this.parseCallExpression(expression);
+          continue;
+        }
+
+        if (this.match(TokenType.Dot)) {
+          const propertyToken: Token = this.consume(TokenType.Identifier, 'Expected a member name after ".".');
+          const property: IdentifierNode = this.createIdentifierNode(propertyToken);
+
+          expression = {
+            kind: 'MemberExpression',
+            location: this.mergeLocations(expression.location, property.location),
+            object: expression,
+            property,
+          } satisfies MemberExpressionNode;
+          continue;
+        }
+
+        return expression;
+      }
+    }
+
     if (this.match(TokenType.This)) {
       const token: Token = this.previous();
       let expression: ExpressionNode = {

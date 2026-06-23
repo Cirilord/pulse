@@ -22,7 +22,9 @@ This README should be kept up to date as the project evolves.
 - A basic native compilation runner is available in `src/compiler`
 - The compiler currently supports function declarations, `throws`, explicit `return` statements, `defer` statements, block statements with lexical scoping, `if`/`elif`/`else`, `while`, `do while`, `for`, `break`, `continue`, identifier references, grouping with parentheses, unary expressions, arithmetic, bitwise operations, comparisons, logical expressions, conditional expressions, null coalescing expressions, and compound assignment statements
 - Function, method, and constructor parameters currently require explicit `val` or `var`
-- The compiler currently supports classes with fields, constructors, instance methods, static methods, `this`, field access, method calls, builtin `Class.name`, builtin `Class.toString()`, builtin `isInstance(value, Type)`, and constructor calls
+- The compiler currently supports classes with single inheritance via `extends`, `override`, fields, constructors, instance methods, static methods, `this`, `super`, `super.field`, strict `super(...)` constructor calls in derived classes, field access, method calls, builtin `Class.name`, builtin `Class.toString()`, builtin `isInstance(value, Type)`, and constructor calls
+- Subtype assignment between classes is currently blocked, so derived class values cannot yet be assigned to base class variables
+- The generated C currently lowers every class through an implicit shared `object_t` runtime base
 - Throwing calls currently return their error values explicitly, using `unknown?` when a call declares multiple thrown types
 - `isInstance(value, Type)` currently narrows `unknown?` values inside matching `if` branches
 - The compiler currently provides a builtin `Error` class with a `message: string` field and `Error(message)` constructor calls
