@@ -183,6 +183,12 @@ export class Checker {
     }
 
     for (const topLevel of program.body) {
+      if (topLevel.kind === 'VariableDeclaration') {
+        this.predeclareTopLevelVariable(topLevel);
+      }
+    }
+
+    for (const topLevel of program.body) {
       if (topLevel.kind === 'FunctionDeclaration') {
         this.declareFunction(topLevel);
       }
@@ -1328,6 +1334,11 @@ export class Checker {
       return;
     }
 
+    if (topLevel.kind === 'VariableDeclaration') {
+      this.checkTopLevelVariableDeclaration(topLevel);
+      return;
+    }
+
     throw new CheckerError('Top-level statements are not allowed.', topLevel.location);
   }
 
@@ -1493,6 +1504,27 @@ export class Checker {
       );
     }
 
+    this.validateVariableInitializer(declaration, declaredType);
+
+    currentScope.set(declaration.name.name, {
+      declaredType: declaredType,
+      mutability: declaration.mutability,
+      type: declaredType,
+    });
+  }
+
+  private checkTopLevelVariableDeclaration(declaration: VariableDeclarationNode): void {
+    const currentScope: Map<string, SymbolEntry> = this.peekScope();
+    const symbol: SymbolEntry | undefined = currentScope.get(declaration.name.name);
+
+    if (symbol === undefined) {
+      throw new CheckerError(`Variable "${declaration.name.name}" must be predeclared.`, declaration.name.location);
+    }
+
+    this.validateVariableInitializer(declaration, symbol.declaredType);
+  }
+
+  private validateVariableInitializer(declaration: VariableDeclarationNode, declaredType: ResolvedType): void {
     if (declaration.initializer.kind === 'CallExpression') {
       const throwsInfo: ThrowsCallInfo = this.resolveThrowsCallInfo(declaration.initializer);
 
@@ -1509,21 +1541,39 @@ export class Checker {
         }
 
         this.assertErrorBindingMatchesThrows(declaration.type, throwsInfo.throws);
-
-        currentScope.set(declaration.name.name, {
-          declaredType: declaredType,
-          mutability: declaration.mutability,
-          type: declaredType,
-        });
-
         return;
       }
     }
 
     this.assertExpressionAssignable(declaredType, declaration.initializer);
+  }
+
+  private predeclareTopLevelVariable(declaration: VariableDeclarationNode): void {
+    const currentScope: Map<string, SymbolEntry> = this.peekScope();
+
+    if (
+      currentScope.has(declaration.name.name) ||
+      this.functions.has(declaration.name.name) ||
+      this.classes.has(declaration.name.name)
+    ) {
+      throw new CheckerError(`Variable "${declaration.name.name}" is already declared.`, declaration.name.location);
+    }
+
+    const declaredType: ResolvedType = this.resolveType(declaration.type);
+
+    if (declaredType.kind === 'primitive' && declaredType.name === 'void') {
+      throw new CheckerError('Variables cannot use the void type.', declaration.type.location);
+    }
+
+    if (declaredType.kind === 'unknown') {
+      throw new CheckerError(
+        'The "unknown" type is only allowed for error bindings from throwing calls.',
+        declaration.type.location
+      );
+    }
 
     currentScope.set(declaration.name.name, {
-      declaredType: declaredType,
+      declaredType,
       mutability: declaration.mutability,
       type: declaredType,
     });
@@ -1743,7 +1793,11 @@ export class Checker {
   }
 
   private declareFunction(statement: FunctionDeclarationNode): void {
-    if (this.functions.has(statement.name.name) || this.classes.has(statement.name.name)) {
+    if (
+      this.functions.has(statement.name.name) ||
+      this.classes.has(statement.name.name) ||
+      this.peekScope().has(statement.name.name)
+    ) {
       throw new CheckerError(`Function "${statement.name.name}" is already declared.`, statement.name.location);
     }
 

@@ -1,14 +1,13 @@
 #!/usr/bin/env node
 
 import { cac } from 'cac';
-import { readFile, writeFile } from 'node:fs/promises';
+import { writeFile } from 'node:fs/promises';
 import path from 'node:path';
 
 import { Checker } from './checker/checker.js';
 import { CGenerator } from './codegen/c-generator.js';
 import { CCompiler, getDefaultBinaryOutputPath, getDefaultCOutputPath } from './compiler/c-compiler.js';
-import { Lexer } from './lexer/lexer.js';
-import { Parser } from './parser/parser.js';
+import { ModuleResolver } from './compiler/module-resolver.js';
 
 const cli = cac('pulse');
 
@@ -24,11 +23,8 @@ cli
   .option('--emit-c [path]', 'Write the generated C file to disk')
   .option('-o, --output <output>', 'Set the native executable output path')
   .action(async function compileCommand(input: string, options: CompileCommandOptions): Promise<void> {
-    const sourceCode: string = await readFile(input, 'utf8');
-    const lexer: Lexer = new Lexer(sourceCode);
-    const tokens = lexer.tokenize();
-    const parser: Parser = new Parser(tokens);
-    const program = parser.parseProgram();
+    const moduleResolver: ModuleResolver = new ModuleResolver();
+    const program = await moduleResolver.resolveEntry(input);
     const checker: Checker = new Checker();
     const cGenerator: CGenerator = new CGenerator();
     const cCompiler: CCompiler = new CCompiler();

@@ -34,6 +34,7 @@ import type {
 
 type FunctionCodegenEntry = {
   declaration: FunctionDeclarationNode;
+  generatedName: string;
 };
 
 type ClassMethodCodegenEntry = {
@@ -85,6 +86,8 @@ export class CGenerator {
 
   private readonly functions: Map<string, FunctionCodegenEntry>;
 
+  private readonly globalVariables: Map<string, VariableDeclarationNode>;
+
   private readonly cleanupScopes: CleanupScope[];
 
   private readonly scopes: Map<string, ScopeEntry>[];
@@ -97,6 +100,7 @@ export class CGenerator {
     this.currentFunction = null;
     this.currentMethod = null;
     this.functions = new Map<string, FunctionCodegenEntry>();
+    this.globalVariables = new Map<string, VariableDeclarationNode>();
     this.cleanupScopes = [];
     this.scopes = [];
     this.temporaryCounter = 0;
@@ -107,6 +111,8 @@ export class CGenerator {
     this.collectClasses(program);
     this.functions.clear();
     this.collectFunctions(program);
+    this.globalVariables.clear();
+    this.collectGlobalVariables(program);
     this.cleanupScopes.length = 0;
     this.scopes.length = 0;
     this.currentFunction = null;
@@ -175,6 +181,7 @@ export class CGenerator {
     }
 
     this.emitNullableTypeDefinitions(program, lines);
+    this.emitGlobalVariableDefinitions(program, lines);
     this.emitThrowingResultDefinitions(program, lines);
     this.emitPrototypes(program, lines);
     this.emitImplementations(program, lines);
@@ -241,7 +248,18 @@ export class CGenerator {
   private collectFunctions(program: ProgramNode): void {
     for (const topLevel of program.body) {
       if (topLevel.kind === 'FunctionDeclaration') {
-        this.functions.set(topLevel.name.name, { declaration: topLevel });
+        this.functions.set(topLevel.name.name, {
+          declaration: topLevel,
+          generatedName: this.generateTopLevelFunctionName(topLevel.name.name, program),
+        });
+      }
+    }
+  }
+
+  private collectGlobalVariables(program: ProgramNode): void {
+    for (const topLevel of program.body) {
+      if (topLevel.kind === 'VariableDeclaration') {
+        this.globalVariables.set(topLevel.name.name, topLevel);
       }
     }
   }
@@ -385,7 +403,7 @@ export class CGenerator {
   private emitBuiltinClassMembers(lines: string[]): void {
     for (const classEntry of this.getClassEntriesInDependencyOrder()) {
       lines.push(
-        `const string_t ${this.generateBuiltinClassNameSymbol(classEntry.declaration.name.name)} = STRING_LITERAL(${JSON.stringify(classEntry.declaration.name.name)});`
+        `const string_t ${this.generateBuiltinClassNameSymbol(classEntry.declaration.name.name)} = STRING_LITERAL(${JSON.stringify(this.getDisplayTypeName(classEntry.declaration.name.name))});`
       );
       lines.push('');
     }
@@ -413,10 +431,11 @@ export class CGenerator {
   }
 
   private generateClassShapeLiteral(classEntry: ClassCodegenEntry): string {
+    const displayClassName: string = this.getDisplayTypeName(classEntry.declaration.name.name);
     const headerLine: string =
       classEntry.baseClassName === null
-        ? `class ${classEntry.declaration.name.name} {`
-        : `class ${classEntry.declaration.name.name} extends ${classEntry.baseClassName} {`;
+        ? `class ${displayClassName} {`
+        : `class ${displayClassName} extends ${this.getDisplayTypeName(classEntry.baseClassName)} {`;
     const lines: string[] = [headerLine];
 
     for (const member of classEntry.declaration.members) {
@@ -447,6 +466,30 @@ export class CGenerator {
     for (const functionDeclaration of this.getFunctionDeclarations(program)) {
       lines.push(...this.generateFunctionDeclaration(functionDeclaration));
       lines.push('');
+    }
+
+    if (this.getTopLevelVariableDeclarations(program).length > 0) {
+      const mainEntry: FunctionCodegenEntry | undefined = this.functions.get('main');
+
+      if (mainEntry !== undefined && mainEntry.generatedName !== 'main') {
+        if (
+          mainEntry.declaration.parameters.length > 0 ||
+          mainEntry.declaration.throws.length > 0 ||
+          mainEntry.declaration.returnType.kind !== 'NamedType' ||
+          mainEntry.declaration.returnType.name !== 'int'
+        ) {
+          throw new CGeneratorError(
+            'Programs with top-level variables require "main(): int" without parameters or throws.',
+            mainEntry.declaration.location
+          );
+        }
+
+        lines.push('int main(void) {');
+        lines.push('  pulse__init_globals();');
+        lines.push(`  return ${mainEntry.generatedName}();`);
+        lines.push('}');
+        lines.push('');
+      }
     }
   }
 
@@ -523,6 +566,32 @@ export class CGenerator {
       lines.push(`} ${this.getNullableCType(nullableTypeName)};`);
       lines.push('');
     }
+  }
+
+  private emitGlobalVariableDefinitions(program: ProgramNode, lines: string[]): void {
+    const globalVariables: VariableDeclarationNode[] = this.getTopLevelVariableDeclarations(program);
+
+    if (globalVariables.length === 0) {
+      return;
+    }
+
+    for (const declaration of globalVariables) {
+      lines.push(
+        `${this.generateGlobalVariableType(declaration.type)} ${declaration.name.name} = ${this.getTypeDefaultValue(declaration.type)};`
+      );
+    }
+
+    lines.push('');
+    lines.push('static void pulse__init_globals(void) {');
+
+    for (const declaration of globalVariables) {
+      lines.push(
+        `  ${declaration.name.name} = ${this.generateAssignedValue(declaration.type, declaration.initializer)};`
+      );
+    }
+
+    lines.push('}');
+    lines.push('');
   }
 
   private emitPrototypes(program: ProgramNode, lines: string[]): void {
@@ -704,7 +773,7 @@ export class CGenerator {
         functionEntry.declaration.parameters
       );
 
-      return `${expression.callee.name}(${argumentsList})`;
+      return `${functionEntry.generatedName}(${argumentsList})`;
     }
 
     if (expression.callee.kind !== 'MemberExpression') {
@@ -860,6 +929,17 @@ export class CGenerator {
 
   private generateBuiltinClassNameSymbol(className: string): string {
     return `${className}__static_arg__name`;
+  }
+
+  private generateTopLevelFunctionName(functionName: string, program: ProgramNode): string {
+    if (
+      functionName === 'main' &&
+      program.body.some((topLevel: TopLevelNode): boolean => topLevel.kind === 'VariableDeclaration')
+    ) {
+      return 'pulse__user__main';
+    }
+
+    return functionName;
   }
 
   private findFieldInHierarchy(
@@ -1534,7 +1614,10 @@ export class CGenerator {
       .join(', ');
     const cParameters: string = parameters.length > 0 ? parameters : 'void';
 
-    return `${this.generateCallableCType(null, statement)} ${statement.name.name}(${cParameters});`;
+    const functionEntry: FunctionCodegenEntry | undefined = this.functions.get(statement.name.name);
+    const generatedName: string = functionEntry?.generatedName ?? statement.name.name;
+
+    return `${this.generateCallableCType(null, statement)} ${generatedName}(${cParameters});`;
   }
 
   private generateIfStatement(statement: IfStatementNode, indentLevel: number, isElseIf: boolean = false): string[] {
@@ -1907,11 +1990,19 @@ export class CGenerator {
     }
   }
 
+  private getDisplayTypeName(typeName: string): string {
+    return typeName.replace(/^pulse__module_\d+__/u, '');
+  }
+
   private getFunctionDeclarations(program: ProgramNode): FunctionDeclarationNode[] {
     for (const topLevel of program.body) {
-      if (topLevel.kind !== 'ClassDeclaration' && topLevel.kind !== 'FunctionDeclaration') {
+      if (
+        topLevel.kind !== 'ClassDeclaration' &&
+        topLevel.kind !== 'FunctionDeclaration' &&
+        topLevel.kind !== 'VariableDeclaration'
+      ) {
         throw new CGeneratorError(
-          'Top-level statements are not allowed. Declare functions and classes only.',
+          'Top-level declarations must be imports, functions, classes, or variable declarations only.',
           topLevel.location
         );
       }
@@ -1920,6 +2011,28 @@ export class CGenerator {
     return program.body.filter(function isFunctionDeclaration(topLevel): topLevel is FunctionDeclarationNode {
       return topLevel.kind === 'FunctionDeclaration';
     });
+  }
+
+  private getTopLevelVariableDeclarations(program: ProgramNode): VariableDeclarationNode[] {
+    return program.body.filter(function isVariableDeclaration(topLevel): topLevel is VariableDeclarationNode {
+      return topLevel.kind === 'VariableDeclaration';
+    });
+  }
+
+  private generateGlobalVariableType(type: TypeNode): string {
+    if (type.kind === 'NullableType') {
+      return this.getNullableCType(type.type.name);
+    }
+
+    return this.getNonNullableCType(type.name);
+  }
+
+  private getTypeDefaultValue(type: TypeNode): string {
+    if (type.kind === 'NullableType') {
+      return `(${this.getNullableCType(type.type.name)}){ .is_null = true, .value = ${this.getDefaultValue(type.type.name)} }`;
+    }
+
+    return this.getDefaultValue(type.name);
   }
 
   private getNonNullableCType(typeName: string): string {
@@ -2427,6 +2540,12 @@ export class CGenerator {
       };
     }
 
+    const globalVariable: VariableDeclarationNode | undefined = this.globalVariables.get(expression.name);
+
+    if (globalVariable !== undefined) {
+      return globalVariable.type;
+    }
+
     throw new Error(`Unknown variable "${expression.name}" in C generator.`);
   }
 
@@ -2658,10 +2777,10 @@ export class CGenerator {
 
   private stringifyTypeNode(type: TypeNode): string {
     if (type.kind === 'NullableType') {
-      return `${type.type.name}?`;
+      return `${this.getDisplayTypeName(type.type.name)}?`;
     }
 
-    return type.name;
+    return this.getDisplayTypeName(type.name);
   }
 
   private typeUsesString(type: TypeNode): boolean {

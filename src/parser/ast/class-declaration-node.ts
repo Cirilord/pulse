@@ -7,6 +7,7 @@ export type ClassMemberDeclarationNode = ClassFieldDeclarationNode | ClassMethod
 
 export type ClassDeclarationNode = BaseNode & {
   baseName: IdentifierNode | null;
+  isExported: boolean;
   kind: 'ClassDeclaration';
   members: ClassMemberDeclarationNode[];
   name: IdentifierNode;

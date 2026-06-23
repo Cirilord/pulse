@@ -207,7 +207,7 @@ describe('variables example', function describeVariablesExample(): void {
     );
   });
 
-  test('rejects top-level executable statements outside functions', function testTopLevelStatements(): void {
+  test('allows top-level variable declarations', function testTopLevelStatements(): void {
     const sourceCode = 'val nickname: string = "Pulse";';
     const lexer: Lexer = new Lexer(sourceCode);
     const parser: Parser = new Parser(lexer.tokenize());
@@ -215,7 +215,7 @@ describe('variables example', function describeVariablesExample(): void {
 
     expect(function checkTopLevelStatementsProgram(): void {
       checker.checkProgram(parser.parseProgram());
-    }).toThrow(CheckerError);
+    }).not.toThrow();
   });
 
   test('derives the default native output path from the source file', function testDefaultBinaryOutputPath(): void {

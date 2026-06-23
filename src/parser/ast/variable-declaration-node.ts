@@ -5,6 +5,7 @@ import type { TypeNode } from './type-node.js';
 
 export type VariableDeclarationNode = BaseNode & {
   initializer: ExpressionNode;
+  isExported: boolean;
   kind: 'VariableDeclaration';
   mutability: 'val' | 'var';
   name: IdentifierNode;

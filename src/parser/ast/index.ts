@@ -34,6 +34,7 @@ export type { FunctionDeclarationNode } from './function-declaration-node.js';
 export type { FunctionParameterNode } from './function-parameter-node.js';
 export type { IdentifierNode } from './identifier-node.js';
 export type { IfStatementNode } from './if-statement-node.js';
+export type { ImportDeclarationNode } from './import-declaration-node.js';
 export type { MultiVariableDeclarationNode } from './multi-variable-declaration-node.js';
 export type { ProgramNode } from './program-node.js';
 export type { ReturnStatementNode } from './return-statement-node.js';

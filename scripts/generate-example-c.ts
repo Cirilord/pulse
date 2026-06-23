@@ -1,10 +1,9 @@
-import { readdir, readFile, writeFile } from 'node:fs/promises';
+import { readdir, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 
 import { Checker } from '../src/checker/checker.js';
 import { CGenerator } from '../src/codegen/c-generator.js';
-import { Lexer } from '../src/lexer/lexer.js';
-import { Parser } from '../src/parser/parser.js';
+import { ModuleResolver } from '../src/compiler/module-resolver.js';
 
 async function collectPulseFiles(directoryPath: string): Promise<string[]> {
   const directoryEntries = await readdir(directoryPath, {
@@ -30,12 +29,10 @@ async function collectPulseFiles(directoryPath: string): Promise<string[]> {
 }
 
 async function generateCFile(inputPath: string): Promise<void> {
-  const sourceCode: string = await readFile(inputPath, 'utf8');
-  const lexer: Lexer = new Lexer(sourceCode);
-  const parser: Parser = new Parser(lexer.tokenize());
+  const moduleResolver: ModuleResolver = new ModuleResolver();
   const checker: Checker = new Checker();
   const generator: CGenerator = new CGenerator();
-  const program = parser.parseProgram();
+  const program = await moduleResolver.resolveEntry(inputPath);
   const outputPath: string = inputPath.replace(/\.p$/u, '.c');
 
   checker.checkProgram(program);

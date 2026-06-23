@@ -24,6 +24,7 @@ import type {
   ForStatementNode,
   IdentifierNode,
   IdentifierExpressionNode,
+  ImportDeclarationNode,
   IfStatementNode,
   MemberExpressionNode,
   MultiVariableDeclarationNode,
@@ -419,6 +420,10 @@ export class Parser {
   }
 
   private parseClassDeclaration(keywordToken: Token): ClassDeclarationNode {
+    return this.parseClassDeclarationWithExport(keywordToken, false);
+  }
+
+  private parseClassDeclarationWithExport(keywordToken: Token, isExported: boolean): ClassDeclarationNode {
     const nameToken: Token = this.consume(TokenType.Identifier, 'Expected a class name.');
     const name: IdentifierNode = this.createIdentifierNode(nameToken);
     let baseName: IdentifierNode | null = null;
@@ -440,6 +445,7 @@ export class Parser {
 
     return {
       baseName,
+      isExported,
       kind: 'ClassDeclaration',
       location: this.mergeLocations(keywordToken.location, rightBraceToken.location),
       members,
@@ -749,6 +755,10 @@ export class Parser {
   }
 
   private parseFunctionDeclaration(keywordToken: Token): FunctionDeclarationNode {
+    return this.parseFunctionDeclarationWithExport(keywordToken, false);
+  }
+
+  private parseFunctionDeclarationWithExport(keywordToken: Token, isExported: boolean): FunctionDeclarationNode {
     const nameToken: Token = this.consume(TokenType.Identifier, 'Expected a function name.');
     const name: IdentifierNode = this.createIdentifierNode(nameToken);
 
@@ -768,6 +778,7 @@ export class Parser {
 
     return {
       body,
+      isExported,
       kind: 'FunctionDeclaration',
       location: this.mergeLocations(keywordToken.location, body.location),
       name,
@@ -816,6 +827,71 @@ export class Parser {
       location: this.mergeLocations(keywordToken.location, (elseBranch ?? thenBranch).location),
       thenBranch,
     };
+  }
+
+  private parseImportDeclaration(keywordToken: Token): ImportDeclarationNode {
+    return this.parseImportDeclarationWithExport(keywordToken, false, true);
+  }
+
+  private parseImportDeclarationWithExport(
+    keywordToken: Token,
+    isExported: boolean,
+    allowNamespaceImport: boolean
+  ): ImportDeclarationNode {
+    let importAll: boolean = false;
+    let namespaceImport: IdentifierNode | null = null;
+    const namedImports: IdentifierNode[] = [];
+
+    if (this.match(TokenType.Star)) {
+      importAll = true;
+    } else if (this.match(TokenType.LeftBrace)) {
+      namedImports.push(...this.parseNamedImports());
+    } else {
+      if (!allowNamespaceImport) {
+        throw new ParserError('Expected "*" or "{" after "export".', this.peek().location);
+      }
+
+      const namespaceToken: Token = this.consume(TokenType.Identifier, 'Expected a namespace name, "{", or "*".');
+      namespaceImport = this.createIdentifierNode(namespaceToken);
+
+      if (this.match(TokenType.Comma)) {
+        this.consume(TokenType.LeftBrace, 'Expected "{" after "," in the import declaration.');
+        namedImports.push(...this.parseNamedImports());
+      }
+    }
+
+    this.consume(TokenType.From, 'Expected "from" in the import declaration.');
+
+    const sourceToken: Token = this.consume(
+      TokenType.StringLiteral,
+      'Expected a string source in the import declaration.'
+    );
+    const semicolonToken: Token = this.consume(TokenType.Semicolon, 'Expected ";" after the import declaration.');
+
+    return {
+      importAll,
+      isExported,
+      kind: 'ImportDeclaration',
+      location: this.mergeLocations(keywordToken.location, semicolonToken.location),
+      namedImports,
+      namespaceImport,
+      source: sourceToken.lexeme.slice(1, -1),
+    };
+  }
+
+  private parseNamedImports(): IdentifierNode[] {
+    const imports: IdentifierNode[] = [];
+
+    if (!this.check(TokenType.RightBrace)) {
+      do {
+        const importToken: Token = this.consume(TokenType.Identifier, 'Expected an imported name.');
+        imports.push(this.createIdentifierNode(importToken));
+      } while (this.match(TokenType.Comma));
+    }
+
+    this.consume(TokenType.RightBrace, 'Expected "}" after the named imports.');
+
+    return imports;
   }
 
   private parseLogicalAndExpression(): ExpressionNode {
@@ -1141,6 +1217,14 @@ export class Parser {
   }
 
   private parseTopLevel(): TopLevelNode {
+    if (this.match(TokenType.Import)) {
+      return this.parseImportDeclaration(this.previous());
+    }
+
+    if (this.match(TokenType.Export)) {
+      return this.parseExportedTopLevel(this.previous());
+    }
+
     if (this.match(TokenType.Class)) {
       return this.parseClassDeclaration(this.previous());
     }
@@ -1149,7 +1233,40 @@ export class Parser {
       return this.parseFunctionDeclaration(this.previous());
     }
 
-    return this.parseStatement();
+    if (this.match(TokenType.Var, TokenType.Val)) {
+      return this.parseTopLevelVariableDeclaration(this.previous(), false);
+    }
+
+    throw new ParserError('Expected a top-level declaration.', this.peek().location);
+  }
+
+  private parseExportedTopLevel(keywordToken: Token): TopLevelNode {
+    if (this.check(TokenType.Star) || this.check(TokenType.LeftBrace)) {
+      return this.parseImportDeclarationWithExport(keywordToken, true, false);
+    }
+
+    if (this.match(TokenType.Class)) {
+      return this.parseClassDeclarationWithExport(this.previous(), true);
+    }
+
+    if (this.match(TokenType.Fn)) {
+      return this.parseFunctionDeclarationWithExport(this.previous(), true);
+    }
+
+    if (this.match(TokenType.Var, TokenType.Val)) {
+      return this.parseTopLevelVariableDeclaration(this.previous(), true);
+    }
+
+    throw new ParserError('Expected "class", "fn", "val", or "var" after "export".', keywordToken.location);
+  }
+
+  private parseTopLevelVariableDeclaration(mutabilityToken: Token, isExported: boolean): VariableDeclarationNode {
+    const declaration: VariableDeclarationNode = this.parseVariableDeclaration(mutabilityToken);
+
+    return {
+      ...declaration,
+      isExported,
+    };
   }
 
   private parseType(): TypeNode {
@@ -1229,6 +1346,7 @@ export class Parser {
 
     return {
       initializer: initializerNode,
+      isExported: false,
       kind: 'VariableDeclaration',
       location: this.mergeLocations(binding.location, semicolonToken.location),
       mutability: binding.mutability,
@@ -1250,6 +1368,7 @@ export class Parser {
 
       return {
         initializer: initializerNode,
+        isExported: false,
         kind: 'VariableDeclaration',
         location: this.mergeLocations(firstBinding.location, semicolonToken.location),
         mutability: firstBinding.mutability,

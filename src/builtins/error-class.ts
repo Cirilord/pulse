@@ -105,6 +105,7 @@ function createConstructor(): ClassMethodDeclarationNode {
 export function createBuiltinErrorClassDeclaration(): ClassDeclarationNode {
   return {
     baseName: null,
+    isExported: false,
     kind: 'ClassDeclaration',
     location: BUILTIN_LOCATION,
     members: [createMessageField(), createConstructor()],

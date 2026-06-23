@@ -19,7 +19,7 @@ This document tracks the current function rules in Pulse.
 - Throwing functions with a `void` return type must use `return error;` or `return null;`
 - Throwing calls with a return value must be captured with two variable bindings
 - Throwing calls without a return value must be captured with a single nullable error binding
-- Top-level executable statements are not allowed outside functions
+- Only imports, functions, classes, and single variable declarations are allowed at the top level
 
 ## Valid Example
 
