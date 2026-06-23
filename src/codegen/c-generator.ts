@@ -125,17 +125,22 @@ export class CGenerator {
     const usesStringEquality: boolean = this.usesStringEquality(program);
     const usesStringRuntimeHelpers: boolean = usesStringEquality || this.usesIsInstance(program);
     const usesUnknownType: boolean = this.usesUnknownType(program);
-    const lines: string[] = ['#include <stdbool.h>', '#include <stddef.h>'];
+    const includeLines: Set<string> = new Set<string>(['#include <stdbool.h>', '#include <stddef.h>']);
 
     if (usesBuiltinError) {
-      lines.push('#include <stdio.h>', '#include <stdlib.h>');
+      includeLines.add('#include <stdio.h>');
+      includeLines.add('#include <stdlib.h>');
     }
 
     if (usesStringRuntimeHelpers) {
-      lines.push('#include <string.h>');
+      includeLines.add('#include <string.h>');
     }
 
-    lines.push('');
+    for (const headerName of this.collectExternHeaderNames(program)) {
+      includeLines.add(`#include <${headerName}>`);
+    }
+
+    const lines: string[] = [...includeLines, ''];
 
     if (usesStringType) {
       lines.push('typedef struct {');
@@ -464,6 +469,10 @@ export class CGenerator {
     }
 
     for (const functionDeclaration of this.getFunctionDeclarations(program)) {
+      if (functionDeclaration.isExtern) {
+        continue;
+      }
+
       lines.push(...this.generateFunctionDeclaration(functionDeclaration));
       lines.push('');
     }
@@ -618,6 +627,18 @@ export class CGenerator {
     if (prototypes.length > 0) {
       lines.push('');
     }
+  }
+
+  private collectExternHeaderNames(program: ProgramNode): string[] {
+    const headerNames: Set<string> = new Set<string>();
+
+    for (const functionDeclaration of this.getFunctionDeclarations(program)) {
+      if (functionDeclaration.isExtern && functionDeclaration.externSource !== null) {
+        headerNames.add(functionDeclaration.externSource);
+      }
+    }
+
+    return [...headerNames].sort();
   }
 
   private expressionUsesStringEquality(expression: ExpressionNode): boolean {
@@ -1562,6 +1583,10 @@ export class CGenerator {
   }
 
   private generateFunctionDeclaration(statement: FunctionDeclarationNode): string[] {
+    if (statement.isExtern) {
+      return [];
+    }
+
     this.pushScope();
     this.pushCleanupScope('function');
     const previousFunction: FunctionCodegenEntry | null = this.currentFunction;

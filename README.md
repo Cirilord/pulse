@@ -23,6 +23,7 @@ This README should be kept up to date as the project evolves.
 - A basic native compilation runner is available in `src/compiler`
 - The compiler currently supports function declarations, `throws`, explicit `return` statements, `defer` statements, block statements with lexical scoping, `if`/`elif`/`else`, `while`, `do while`, `for`, `break`, `continue`, identifier references, grouping with parentheses, unary expressions, arithmetic, bitwise operations, comparisons, logical expressions, conditional expressions, null coalescing expressions, and compound assignment statements
 - The compiler currently supports local Pulse file imports with `import ... from "./file"`, top-level `export` on classes, functions, and single variable declarations, plus `export * from "./file"` and `export { A, B } from "./file"` reexports
+- The compiler currently supports cataloged C imports such as `import CStd, { abs } from "c:stdlib.h";`
 - Function, method, and constructor parameters currently require explicit `val` or `var`
 - The compiler currently supports classes with single inheritance via `extends`, `override`, fields, constructors, instance methods, static methods, `this`, `super`, `super.field`, strict `super(...)` constructor calls in derived classes, field access, method calls, builtin `Class.name`, builtin `Class.toString()`, builtin `isInstance(value, Type)`, and constructor calls
 - Subtype assignment between classes is currently blocked, so derived class values cannot yet be assigned to base class variables
@@ -32,7 +33,9 @@ This README should be kept up to date as the project evolves.
 - The compiler currently provides a builtin `Error` class with a `message: string` field and `Error(message)` constructor calls
 - Nullable equality with `==` and `!=` is supported, including comparisons against `null`
 - Conditions and logical negation use strict non-nullable `boolean` values only, with no truthy or falsy coercion
-- Builtin Pulse library imports and direct C imports are not supported yet
+- Builtin Pulse library imports are not supported yet
+- Cataloged C imports currently support named, namespace, and mixed imports only
+- Manual `extern` bindings for C modules are not supported yet
 - Top-level declarations currently allow imports, functions, classes, and single variable declarations only
 - Top-level variables are currently lowered as generated globals and initialized before the user `main(): int`
 - The `compile` command currently reads the input file, tokenizes it, parses it, checks it, generates C, and compiles it with `clang` or `gcc`

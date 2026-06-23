@@ -6,7 +6,9 @@ import type { TypeNode } from './type-node.js';
 
 export type FunctionDeclarationNode = BaseNode & {
   body: BlockStatementNode;
+  externSource: string | null;
   isExported: boolean;
+  isExtern: boolean;
   kind: 'FunctionDeclaration';
   name: IdentifierNode;
   parameters: FunctionParameterNode[];

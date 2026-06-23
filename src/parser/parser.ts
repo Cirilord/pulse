@@ -778,6 +778,8 @@ export class Parser {
 
     return {
       body,
+      externSource: null,
+      isExtern: false,
       isExported,
       kind: 'FunctionDeclaration',
       location: this.mergeLocations(keywordToken.location, body.location),

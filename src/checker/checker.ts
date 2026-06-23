@@ -849,7 +849,7 @@ export class Checker {
   private checkFunctionDeclaration(statement: FunctionDeclarationNode): void {
     const functionEntry: FunctionEntry = this.functions.get(statement.name.name)!;
 
-    if (!this.statementListAlwaysReturns(statement.body.body)) {
+    if (!statement.isExtern && !this.statementListAlwaysReturns(statement.body.body)) {
       throw new CheckerError(
         `Function "${statement.name.name}" must end with an explicit return statement.`,
         statement.body.location
@@ -879,8 +879,10 @@ export class Checker {
         });
       }
 
-      for (const innerStatement of statement.body.body) {
-        this.checkStatement(innerStatement);
+      if (!statement.isExtern) {
+        for (const innerStatement of statement.body.body) {
+          this.checkStatement(innerStatement);
+        }
       }
     } finally {
       this.currentFunctionReturnType = previousFunctionReturnType;

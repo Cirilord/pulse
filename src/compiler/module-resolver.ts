@@ -1,6 +1,7 @@
 import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 
+import { createCModuleCatalogEntry, createVirtualProgram } from './c-module-catalog.js';
 import { Lexer } from '../lexer/lexer.js';
 import { type TokenLocation } from '../lexer/token.js';
 import type {
@@ -153,6 +154,10 @@ export class ModuleResolver {
         continue;
       }
 
+      if (this.isCImportSource(importDeclaration.source)) {
+        throw new ModuleResolverError('Reexporting C modules is not supported yet.', importDeclaration.location);
+      }
+
       const dependencyPath: string = this.resolveImportSource(moduleRecord.path, importDeclaration);
       const dependencyModule: ModuleRecord | undefined = this.modules.get(dependencyPath);
 
@@ -260,6 +265,10 @@ export class ModuleResolver {
     return orderedModules;
   }
 
+  private isCImportSource(source: string): boolean {
+    return source.startsWith('c:');
+  }
+
   private isScopedName(context: TransformContext, name: string): boolean {
     for (let index: number = context.scopes.length - 1; index >= 0; index -= 1) {
       if (context.scopes[index]?.has(name)) {
@@ -291,6 +300,48 @@ export class ModuleResolver {
     this.resolvingPaths.push(normalizedPath);
 
     try {
+      if (this.isCImportSource(normalizedPath)) {
+        const catalogEntry = createCModuleCatalogEntry(normalizedPath, {
+          end: { column: 0, line: 0 },
+          start: { column: 0, line: 0 },
+        });
+
+        if (catalogEntry === null) {
+          throw new ModuleResolverError(`Unknown C module "${normalizedPath}".`);
+        }
+
+        const declarations: TopLevelDeclarationNode[] = catalogEntry.declarations;
+        const localDeclarations: Map<string, ExportedDeclaration> = new Map<string, ExportedDeclaration>();
+
+        for (const declaration of declarations) {
+          localDeclarations.set(declaration.name.name, {
+            internalName: declaration.name.name,
+            kind: this.getDeclarationKind(declaration),
+          });
+        }
+
+        const moduleRecord: ModuleRecord = {
+          declarations,
+          exports: new Map<string, ExportedDeclaration>(),
+          imports: [],
+          isRoot,
+          localDeclarations,
+          path: normalizedPath,
+          program: createVirtualProgram({
+            end: { column: 0, line: 0 },
+            start: { column: 0, line: 0 },
+          }),
+          transformedBody: declarations,
+        };
+
+        for (const [exportName, exportedDeclaration] of localDeclarations) {
+          moduleRecord.exports.set(exportName, exportedDeclaration);
+        }
+        this.modules.set(normalizedPath, moduleRecord);
+
+        return moduleRecord;
+      }
+
       const sourceCode: string = await readFile(normalizedPath, 'utf8');
       const parser: Parser = new Parser(new Lexer(sourceCode).tokenize());
       const program: ProgramNode = parser.parseProgram();
@@ -346,6 +397,10 @@ export class ModuleResolver {
   }
 
   private normalizeModulePath(modulePath: string): string {
+    if (this.isCImportSource(modulePath)) {
+      return modulePath;
+    }
+
     return modulePath.endsWith('.p') ? modulePath : `${modulePath}.p`;
   }
 
@@ -396,6 +451,10 @@ export class ModuleResolver {
   }
 
   private resolveImportSource(modulePath: string, importDeclaration: ImportDeclarationNode): string {
+    if (this.isCImportSource(importDeclaration.source)) {
+      return importDeclaration.source;
+    }
+
     if (!importDeclaration.source.startsWith('./') && !importDeclaration.source.startsWith('../')) {
       throw new ModuleResolverError(
         `Only relative Pulse imports are supported for now, got "${importDeclaration.source}".`,
@@ -416,6 +475,10 @@ export class ModuleResolver {
     for (const importDeclaration of moduleRecord.imports) {
       if (importDeclaration.isExported) {
         continue;
+      }
+
+      if (this.isCImportSource(importDeclaration.source) && importDeclaration.importAll) {
+        throw new ModuleResolverError('C module imports do not support "import *" yet.', importDeclaration.location);
       }
 
       const dependencyPath: string = this.resolveImportSource(moduleRecord.path, importDeclaration);

@@ -5,10 +5,14 @@ This document tracks the current local Pulse module rules.
 ## Rules
 
 - Only relative Pulse file imports are supported for now
+- Cataloged C imports are supported with `from "c:..."`
 - Imports currently resolve only `./...` and `../...` sources
 - Pulse automatically resolves `.p` when an import source omits the extension
 - Builtin library imports such as `"array"` are not supported yet
-- C imports such as `"c:stdio.h"` are not supported yet
+- C imports currently support named imports, namespace imports, and mixed namespace-plus-named imports only
+- C imports currently do not support `import *` yet
+- Only cataloged C modules are supported for now
+- Reexporting C modules is not supported yet
 - Top-level declarations can currently be `import`, `class`, `fn`, or single `val`/`var` declarations
 - `export` can currently be used on top-level `class`, `fn`, `val`, and `var` declarations
 - Reexports currently support `export * from "./file"` and `export { A, B } from "./file"`
@@ -53,4 +57,19 @@ export fn logImportedText(): void {
 ```pulse
 export { importedText, logImportedText, ImportedValue, createImportedValue } from "./file1";
 export * from "./extra";
+```
+
+```pulse
+import CStd, { abs } from "c:stdlib.h";
+
+fn main(): int {
+  val direct: int = abs(-10);
+  val namespaced: int = CStd.abs(-20);
+
+  if (direct == 10 && namespaced == 20) {
+    return 1;
+  }
+
+  return 0;
+}
 ```
