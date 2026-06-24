@@ -63,6 +63,7 @@ function createExternFunction(
 ): FunctionDeclarationNode {
   return {
     body: createEmptyBlock(location),
+    externName: name,
     externSource,
     isExtern: true,
     isExported: false,

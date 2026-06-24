@@ -778,6 +778,7 @@ export class Parser {
 
     return {
       body,
+      externName: null,
       externSource: null,
       isExtern: false,
       isExported,
@@ -868,16 +869,118 @@ export class Parser {
       TokenType.StringLiteral,
       'Expected a string source in the import declaration.'
     );
-    const semicolonToken: Token = this.consume(TokenType.Semicolon, 'Expected ";" after the import declaration.');
+    const source: string = sourceToken.lexeme.slice(1, -1);
+    const externDeclarations: Array<FunctionDeclarationNode | VariableDeclarationNode> = [];
+    let endLocation: TokenLocation = sourceToken.location;
+    let isExtern: boolean = false;
+
+    if (this.match(TokenType.Extern)) {
+      isExtern = true;
+      if (!source.startsWith('c:')) {
+        throw new ParserError('Extern imports are only supported for "c:..." sources.', sourceToken.location);
+      }
+
+      this.validateExternImportShape(importAll, namedImports, namespaceImport, keywordToken.location);
+      this.consume(TokenType.LeftBrace, 'Expected "{" after "extern".');
+      externDeclarations.push(...this.parseExternImportDeclarations(source));
+      const rightBraceToken: Token = this.consume(TokenType.RightBrace, 'Expected "}" after the extern declarations.');
+      endLocation = rightBraceToken.location;
+    } else {
+      const semicolonToken: Token = this.consume(TokenType.Semicolon, 'Expected ";" after the import declaration.');
+      endLocation = semicolonToken.location;
+    }
 
     return {
+      externDeclarations,
       importAll,
       isExported,
+      isExtern,
       kind: 'ImportDeclaration',
-      location: this.mergeLocations(keywordToken.location, semicolonToken.location),
+      location: this.mergeLocations(keywordToken.location, endLocation),
       namedImports,
       namespaceImport,
-      source: sourceToken.lexeme.slice(1, -1),
+      source,
+    };
+  }
+
+  private parseExternFunctionDeclaration(source: string): FunctionDeclarationNode {
+    const keywordToken: Token = this.consume(TokenType.Fn, 'Expected "fn" in the extern declaration.');
+    const nameToken: Token = this.consume(TokenType.Identifier, 'Expected a function name.');
+    const name: IdentifierNode = this.createIdentifierNode(nameToken);
+
+    this.consume(TokenType.LeftParen, 'Expected "(" after the function name.');
+
+    const parameters: FunctionParameterNode[] = this.parseFunctionParameters();
+
+    this.consume(TokenType.RightParen, 'Expected ")" after the parameters.');
+    this.consume(TokenType.Colon, 'Expected ":" after the parameters.');
+
+    const returnType: TypeNode = this.parseType();
+    const semicolonToken: Token = this.consume(
+      TokenType.Semicolon,
+      'Expected ";" after the extern function declaration.'
+    );
+
+    return {
+      body: {
+        body: [],
+        kind: 'BlockStatement',
+        location: this.mergeLocations(keywordToken.location, semicolonToken.location),
+      },
+      externName: name.name,
+      externSource: source.slice(2),
+      isExported: false,
+      isExtern: true,
+      kind: 'FunctionDeclaration',
+      location: this.mergeLocations(keywordToken.location, semicolonToken.location),
+      name,
+      parameters,
+      returnType,
+      throws: [],
+    };
+  }
+
+  private parseExternImportDeclarations(source: string): Array<FunctionDeclarationNode | VariableDeclarationNode> {
+    const declarations: Array<FunctionDeclarationNode | VariableDeclarationNode> = [];
+
+    while (!this.check(TokenType.RightBrace) && !this.isAtEnd()) {
+      if (this.check(TokenType.Fn)) {
+        declarations.push(this.parseExternFunctionDeclaration(source));
+        continue;
+      }
+
+      if (this.match(TokenType.Val, TokenType.Var)) {
+        declarations.push(this.parseExternVariableDeclaration(this.previous(), source));
+        continue;
+      }
+
+      throw new ParserError(
+        'Expected "fn", "val", or "var" inside the extern declaration block.',
+        this.peek().location
+      );
+    }
+
+    return declarations;
+  }
+
+  private parseExternVariableDeclaration(mutabilityToken: Token, source: string): VariableDeclarationNode {
+    const binding: VariableBindingNode = this.parseVariableBinding(mutabilityToken);
+    const semicolonToken: Token = this.consume(
+      TokenType.Semicolon,
+      'Expected ";" after the extern variable declaration.'
+    );
+
+    return {
+      externName: binding.name.name,
+      externSource: source.slice(2),
+      initializer: null,
+      isExported: false,
+      isExtern: true,
+      kind: 'VariableDeclaration',
+      location: this.mergeLocations(binding.location, semicolonToken.location),
+      mutability: binding.mutability,
+      name: binding.name,
+      type: binding.type,
     };
   }
 
@@ -1262,6 +1365,20 @@ export class Parser {
     throw new ParserError('Expected "class", "fn", "val", or "var" after "export".', keywordToken.location);
   }
 
+  private validateExternImportShape(
+    importAll: boolean,
+    namedImports: IdentifierNode[],
+    namespaceImport: IdentifierNode | null,
+    location: TokenLocation
+  ): void {
+    if (namedImports.length > 0 || (!importAll && namespaceImport === null)) {
+      throw new ParserError(
+        'Extern imports currently require either "*" or a namespace import before "from".',
+        location
+      );
+    }
+  }
+
   private parseTopLevelVariableDeclaration(mutabilityToken: Token, isExported: boolean): VariableDeclarationNode {
     const declaration: VariableDeclarationNode = this.parseVariableDeclaration(mutabilityToken);
 
@@ -1347,8 +1464,11 @@ export class Parser {
     const semicolonToken: Token = this.consume(TokenType.Semicolon, 'Expected ";" after the declaration.');
 
     return {
+      externName: null,
+      externSource: null,
       initializer: initializerNode,
       isExported: false,
+      isExtern: false,
       kind: 'VariableDeclaration',
       location: this.mergeLocations(binding.location, semicolonToken.location),
       mutability: binding.mutability,
@@ -1369,8 +1489,11 @@ export class Parser {
       const semicolonToken: Token = this.consume(TokenType.Semicolon, 'Expected ";" after the declaration.');
 
       return {
+        externName: null,
+        externSource: null,
         initializer: initializerNode,
         isExported: false,
+        isExtern: false,
         kind: 'VariableDeclaration',
         location: this.mergeLocations(firstBinding.location, semicolonToken.location),
         mutability: firstBinding.mutability,

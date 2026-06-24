@@ -4,8 +4,11 @@ import type { IdentifierNode } from './identifier-node.js';
 import type { TypeNode } from './type-node.js';
 
 export type VariableDeclarationNode = BaseNode & {
-  initializer: ExpressionNode;
+  externName: string | null;
+  externSource: string | null;
+  initializer: ExpressionNode | null;
   isExported: boolean;
+  isExtern: boolean;
   kind: 'VariableDeclaration';
   mutability: 'val' | 'var';
   name: IdentifierNode;

@@ -10,6 +10,7 @@ export const KEYWORDS: ReadonlyMap<string, TokenType> = new Map<string, TokenTyp
   ['elif', TokenType.Elif],
   ['else', TokenType.Else],
   ['export', TokenType.Export],
+  ['extern', TokenType.Extern],
   ['extends', TokenType.Extends],
   ['false', TokenType.False],
   ['fn', TokenType.Fn],

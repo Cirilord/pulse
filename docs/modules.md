@@ -6,13 +6,17 @@ This document tracks the current local Pulse module rules.
 
 - Only relative Pulse file imports are supported for now
 - Cataloged C imports are supported with `from "c:..."`
+- Manual C bindings are supported with `import ... from "c:..." extern { ... }`
 - Imports currently resolve only `./...` and `../...` sources
 - Pulse automatically resolves `.p` when an import source omits the extension
 - Builtin library imports such as `"array"` are not supported yet
-- C imports currently support named imports, namespace imports, and mixed namespace-plus-named imports only
-- C imports currently do not support `import *` yet
-- Only cataloged C modules are supported for now
+- Cataloged C imports currently support named imports, namespace imports, and mixed namespace-plus-named imports only
+- Cataloged C imports currently do not support `import *` yet
+- Cataloged C modules are supported for now, and manual `extern` bindings can target any `"c:..."` header path
 - Reexporting C modules is not supported yet
+- Manual `extern` C imports currently support namespace imports and `import *` only
+- Manual `extern` C imports currently allow `fn` and top-level `val`/`var` declarations inside the extern block
+- Manual `extern` C imports currently require a `"c:..."` source
 - Top-level declarations can currently be `import`, `class`, `fn`, or single `val`/`var` declarations
 - `export` can currently be used on top-level `class`, `fn`, `val`, and `var` declarations
 - Reexports currently support `export * from "./file"` and `export { A, B } from "./file"`
@@ -67,6 +71,27 @@ fn main(): int {
   val namespaced: int = CStd.abs(-20);
 
   if (direct == 10 && namespaced == 20) {
+    return 1;
+  }
+
+  return 0;
+}
+```
+
+```pulse
+import CLib from "c:stdlib.h" extern {
+  fn abs(val value: int): int;
+}
+
+import Unix from "c:unistd.h" extern {
+  var optind: int;
+}
+
+fn main(): int {
+  val direct: int = CLib.abs(-10);
+  val optionIndex: int = Unix.optind;
+
+  if (direct == 10 && optionIndex >= 0) {
     return 1;
   }
 

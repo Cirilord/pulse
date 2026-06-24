@@ -1296,7 +1296,9 @@ export class Checker {
         return;
       case 'ForStatement':
         if (statement.initializer.kind === 'VariableDeclaration') {
-          this.assertValidSpecialExpressionUsage(statement.initializer.initializer);
+          if (statement.initializer.initializer !== null) {
+            this.assertValidSpecialExpressionUsage(statement.initializer.initializer);
+          }
         } else {
           this.assertValidSpecialExpressionUsage(statement.initializer);
         }
@@ -1317,7 +1319,9 @@ export class Checker {
 
         return;
       case 'VariableDeclaration':
-        this.assertValidSpecialExpressionUsage(statement.initializer);
+        if (statement.initializer !== null) {
+          this.assertValidSpecialExpressionUsage(statement.initializer);
+        }
         return;
       case 'WhileStatement':
         this.assertValidSpecialExpressionUsage(statement.condition);
@@ -1506,6 +1510,20 @@ export class Checker {
       );
     }
 
+    if (declaration.isExtern) {
+      if (declaration.initializer !== null) {
+        throw new CheckerError('Extern variables cannot declare an initializer.', declaration.location);
+      }
+
+      currentScope.set(declaration.name.name, {
+        declaredType: declaredType,
+        mutability: declaration.mutability,
+        type: declaredType,
+      });
+
+      return;
+    }
+
     this.validateVariableInitializer(declaration, declaredType);
 
     currentScope.set(declaration.name.name, {
@@ -1523,10 +1541,29 @@ export class Checker {
       throw new CheckerError(`Variable "${declaration.name.name}" must be predeclared.`, declaration.name.location);
     }
 
+    if (declaration.isExtern) {
+      if (declaration.initializer !== null) {
+        throw new CheckerError('Extern variables cannot declare an initializer.', declaration.location);
+      }
+
+      return;
+    }
+
     this.validateVariableInitializer(declaration, symbol.declaredType);
   }
 
   private validateVariableInitializer(declaration: VariableDeclarationNode, declaredType: ResolvedType): void {
+    if (declaration.initializer === null) {
+      if (declaration.isExtern) {
+        return;
+      }
+
+      throw new CheckerError(
+        'Variables require an initializer unless they are declared as extern.',
+        declaration.location
+      );
+    }
+
     if (declaration.initializer.kind === 'CallExpression') {
       const throwsInfo: ThrowsCallInfo = this.resolveThrowsCallInfo(declaration.initializer);
 
@@ -1571,6 +1608,13 @@ export class Checker {
       throw new CheckerError(
         'The "unknown" type is only allowed for error bindings from throwing calls.',
         declaration.type.location
+      );
+    }
+
+    if (!declaration.isExtern && declaration.initializer === null) {
+      throw new CheckerError(
+        'Variables require an initializer unless they are declared as extern.',
+        declaration.location
       );
     }
 
@@ -1918,6 +1962,7 @@ export class Checker {
         case 'ForStatement':
           return (
             (statement.initializer.kind === 'VariableDeclaration' &&
+              statement.initializer.initializer !== null &&
               expressionMutatesThis(statement.initializer.initializer)) ||
             (statement.initializer.kind !== 'VariableDeclaration' && expressionMutatesThis(statement.initializer)) ||
             expressionMutatesThis(statement.condition) ||
@@ -1936,7 +1981,7 @@ export class Checker {
         case 'DeferStatement':
           return expressionMutatesThis(statement.expression);
         case 'VariableDeclaration':
-          return expressionMutatesThis(statement.initializer);
+          return statement.initializer !== null && expressionMutatesThis(statement.initializer);
         case 'MultiVariableDeclaration':
           return expressionMutatesThis(statement.initializer);
         case 'WhileStatement':
@@ -2120,7 +2165,9 @@ export class Checker {
       case 'ForStatement':
         return [
           ...(statement.initializer.kind === 'VariableDeclaration'
-            ? this.collectSuperConstructorCallsFromExpression(statement.initializer.initializer)
+            ? statement.initializer.initializer === null
+              ? []
+              : this.collectSuperConstructorCallsFromExpression(statement.initializer.initializer)
             : this.collectSuperConstructorCallsFromExpression(statement.initializer)),
           ...this.collectSuperConstructorCallsFromExpression(statement.condition),
           ...this.collectSuperConstructorCallsFromExpression(statement.update),
@@ -2143,7 +2190,9 @@ export class Checker {
           this.collectSuperConstructorCallsFromExpression(value)
         );
       case 'VariableDeclaration':
-        return this.collectSuperConstructorCallsFromExpression(statement.initializer);
+        return statement.initializer === null
+          ? []
+          : this.collectSuperConstructorCallsFromExpression(statement.initializer);
       case 'WhileStatement':
         return [
           ...this.collectSuperConstructorCallsFromExpression(statement.condition),

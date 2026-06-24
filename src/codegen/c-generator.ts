@@ -255,7 +255,10 @@ export class CGenerator {
       if (topLevel.kind === 'FunctionDeclaration') {
         this.functions.set(topLevel.name.name, {
           declaration: topLevel,
-          generatedName: this.generateTopLevelFunctionName(topLevel.name.name, program),
+          generatedName:
+            topLevel.isExtern && topLevel.externName !== null
+              ? topLevel.externName
+              : this.generateTopLevelFunctionName(topLevel.name.name, program),
         });
       }
     }
@@ -477,28 +480,33 @@ export class CGenerator {
       lines.push('');
     }
 
-    if (this.getTopLevelVariableDeclarations(program).length > 0) {
-      const mainEntry: FunctionCodegenEntry | undefined = this.functions.get('main');
+    const hasNonExternTopLevelVariables: boolean = this.getTopLevelVariableDeclarations(program).some(
+      (declaration: VariableDeclarationNode): boolean => !declaration.isExtern
+    );
+    const mainEntry: FunctionCodegenEntry | undefined = this.functions.get('main');
 
-      if (mainEntry !== undefined && mainEntry.generatedName !== 'main') {
-        if (
-          mainEntry.declaration.parameters.length > 0 ||
-          mainEntry.declaration.throws.length > 0 ||
-          mainEntry.declaration.returnType.kind !== 'NamedType' ||
-          mainEntry.declaration.returnType.name !== 'int'
-        ) {
-          throw new CGeneratorError(
-            'Programs with top-level variables require "main(): int" without parameters or throws.',
-            mainEntry.declaration.location
-          );
-        }
-
-        lines.push('int main(void) {');
-        lines.push('  pulse__init_globals();');
-        lines.push(`  return ${mainEntry.generatedName}();`);
-        lines.push('}');
-        lines.push('');
+    if (mainEntry !== undefined && mainEntry.generatedName !== 'main') {
+      if (
+        mainEntry.declaration.parameters.length > 0 ||
+        mainEntry.declaration.throws.length > 0 ||
+        mainEntry.declaration.returnType.kind !== 'NamedType' ||
+        mainEntry.declaration.returnType.name !== 'int'
+      ) {
+        throw new CGeneratorError(
+          'Programs with top-level variables require "main(): int" without parameters or throws.',
+          mainEntry.declaration.location
+        );
       }
+
+      lines.push('int main(void) {');
+
+      if (hasNonExternTopLevelVariables) {
+        lines.push('  pulse__init_globals();');
+      }
+
+      lines.push(`  return ${mainEntry.generatedName}();`);
+      lines.push('}');
+      lines.push('');
     }
   }
 
@@ -585,22 +593,34 @@ export class CGenerator {
     }
 
     for (const declaration of globalVariables) {
+      if (declaration.isExtern) {
+        lines.push(this.generateExternVariableDeclaration(declaration));
+        continue;
+      }
+
       lines.push(
         `${this.generateGlobalVariableType(declaration.type)} ${declaration.name.name} = ${this.getTypeDefaultValue(declaration.type)};`
       );
     }
 
-    lines.push('');
-    lines.push('static void pulse__init_globals(void) {');
+    const initializedVariables: VariableDeclarationNode[] = globalVariables.filter(
+      (declaration: VariableDeclarationNode): boolean => !declaration.isExtern
+    );
 
-    for (const declaration of globalVariables) {
-      lines.push(
-        `  ${declaration.name.name} = ${this.generateAssignedValue(declaration.type, declaration.initializer)};`
-      );
+    lines.push('');
+
+    if (initializedVariables.length > 0) {
+      lines.push('static void pulse__init_globals(void) {');
+
+      for (const declaration of initializedVariables) {
+        lines.push(
+          `  ${declaration.name.name} = ${this.generateAssignedValue(declaration.type, declaration.initializer!)};`
+        );
+      }
+
+      lines.push('}');
+      lines.push('');
     }
-
-    lines.push('}');
-    lines.push('');
   }
 
   private emitPrototypes(program: ProgramNode, lines: string[]): void {
@@ -638,7 +658,19 @@ export class CGenerator {
       }
     }
 
+    for (const variableDeclaration of this.getTopLevelVariableDeclarations(program)) {
+      if (variableDeclaration.isExtern && variableDeclaration.externSource !== null) {
+        headerNames.add(variableDeclaration.externSource);
+      }
+    }
+
     return [...headerNames].sort();
+  }
+
+  private generateExternVariableDeclaration(declaration: VariableDeclarationNode): string {
+    const symbolName: string = declaration.externName ?? declaration.name.name;
+
+    return `extern ${this.generateGlobalVariableType(declaration.type)} ${symbolName};`;
   }
 
   private expressionUsesStringEquality(expression: ExpressionNode): boolean {
@@ -705,7 +737,7 @@ export class CGenerator {
 
   private generateAssignmentTarget(target: AssignmentExpressionNode['target']): string {
     if (target.kind === 'IdentifierExpression') {
-      return target.name;
+      return this.resolveGeneratedIdentifierName(target.name);
     }
 
     return this.generateFieldAccess(target);
@@ -955,7 +987,9 @@ export class CGenerator {
   private generateTopLevelFunctionName(functionName: string, program: ProgramNode): string {
     if (
       functionName === 'main' &&
-      program.body.some((topLevel: TopLevelNode): boolean => topLevel.kind === 'VariableDeclaration')
+      program.body.some(
+        (topLevel: TopLevelNode): boolean => topLevel.kind === 'VariableDeclaration' && !topLevel.isExtern
+      )
     ) {
       return 'pulse__user__main';
     }
@@ -1333,7 +1367,7 @@ export class CGenerator {
       case 'GroupingExpression':
         return `(${this.generateExpression(expression.expression)})`;
       case 'IdentifierExpression':
-        return expression.name;
+        return this.resolveGeneratedIdentifierName(expression.name);
       case 'IntegerLiteral':
         return String(expression.value);
       case 'MemberExpression':
@@ -1922,6 +1956,10 @@ export class CGenerator {
   }
 
   private generateVariableDeclaration(declaration: VariableDeclarationNode): string {
+    if (declaration.initializer === null) {
+      throw new CGeneratorError('Local variable declarations require an initializer.', declaration.location);
+    }
+
     const cType: string = this.generateType(declaration.type, declaration.mutability);
     let initializer: string = this.generateAssignedValue(declaration.type, declaration.initializer);
 
@@ -2164,6 +2202,7 @@ export class CGenerator {
         case 'ForStatement':
           return (
             (statement.initializer.kind === 'VariableDeclaration' &&
+              statement.initializer.initializer !== null &&
               expressionMutatesThis(statement.initializer.initializer)) ||
             (statement.initializer.kind !== 'VariableDeclaration' && expressionMutatesThis(statement.initializer)) ||
             expressionMutatesThis(statement.condition) ||
@@ -2184,7 +2223,7 @@ export class CGenerator {
         case 'MultiVariableDeclaration':
           return expressionMutatesThis(statement.initializer);
         case 'VariableDeclaration':
-          return expressionMutatesThis(statement.initializer);
+          return statement.initializer !== null && expressionMutatesThis(statement.initializer);
         case 'WhileStatement':
           return expressionMutatesThis(statement.condition) || statement.body.body.some(statementMutatesThis);
         case 'BreakStatement':
@@ -2574,6 +2613,16 @@ export class CGenerator {
     throw new Error(`Unknown variable "${expression.name}" in C generator.`);
   }
 
+  private resolveGeneratedIdentifierName(name: string): string {
+    const globalVariable: VariableDeclarationNode | undefined = this.globalVariables.get(name);
+
+    if (globalVariable?.isExtern && globalVariable.externName !== null) {
+      return globalVariable.externName;
+    }
+
+    return name;
+  }
+
   private resolveCallExpressionType(expression: CallExpressionNode): TypeNode {
     if (expression.callee.kind === 'IdentifierExpression') {
       if (expression.callee.name === 'isInstance') {
@@ -2886,9 +2935,9 @@ export class CGenerator {
           this.pushScope();
 
           if (statement.initializer.kind === 'VariableDeclaration') {
-            const initializerUsesStringEquality: boolean = this.expressionUsesStringEquality(
-              statement.initializer.initializer
-            );
+            const initializerUsesStringEquality: boolean =
+              statement.initializer.initializer !== null &&
+              this.expressionUsesStringEquality(statement.initializer.initializer);
             this.peekScope().set(statement.initializer.name.name, {
               declaredType: statement.initializer.type,
               type: statement.initializer.type,
@@ -2961,7 +3010,8 @@ export class CGenerator {
           return declarationUsesStringEquality;
         }
 
-        const declarationUsesStringEquality: boolean = this.expressionUsesStringEquality(statement.initializer);
+        const declarationUsesStringEquality: boolean =
+          statement.initializer !== null && this.expressionUsesStringEquality(statement.initializer);
         this.peekScope().set(statement.name.name, {
           declaredType: statement.type,
           type: statement.type,
@@ -3153,7 +3203,8 @@ export class CGenerator {
           return (
             (statement.initializer.kind === 'VariableDeclaration' &&
               (this.typeUsesBuiltinError(statement.initializer.type) ||
-                expressionUsesBuiltinError(statement.initializer.initializer))) ||
+                (statement.initializer.initializer !== null &&
+                  expressionUsesBuiltinError(statement.initializer.initializer)))) ||
             (statement.initializer.kind !== 'VariableDeclaration' &&
               expressionUsesBuiltinError(statement.initializer)) ||
             expressionUsesBuiltinError(statement.condition) ||
@@ -3176,7 +3227,10 @@ export class CGenerator {
             expressionUsesBuiltinError(statement.initializer)
           );
         case 'VariableDeclaration':
-          return this.typeUsesBuiltinError(statement.type) || expressionUsesBuiltinError(statement.initializer);
+          return (
+            this.typeUsesBuiltinError(statement.type) ||
+            (statement.initializer !== null && expressionUsesBuiltinError(statement.initializer))
+          );
         case 'WhileStatement':
           return expressionUsesBuiltinError(statement.condition) || statement.body.body.some(statementUsesBuiltinError);
       }
@@ -3341,6 +3395,7 @@ export class CGenerator {
         case 'ForStatement':
           return (
             (statement.initializer.kind === 'VariableDeclaration' &&
+              statement.initializer.initializer !== null &&
               expressionUsesIsInstance(statement.initializer.initializer)) ||
             (statement.initializer.kind !== 'VariableDeclaration' && expressionUsesIsInstance(statement.initializer)) ||
             expressionUsesIsInstance(statement.condition) ||
@@ -3360,7 +3415,7 @@ export class CGenerator {
         case 'MultiVariableDeclaration':
           return expressionUsesIsInstance(statement.initializer);
         case 'VariableDeclaration':
-          return expressionUsesIsInstance(statement.initializer);
+          return statement.initializer !== null && expressionUsesIsInstance(statement.initializer);
         case 'WhileStatement':
           return expressionUsesIsInstance(statement.condition) || statement.body.body.some(statementUsesIsInstance);
       }

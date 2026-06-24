@@ -19,6 +19,7 @@ export enum TokenType {
   EOF = 'EOF',
   Equal = 'Equal',
   EqualEqual = 'EqualEqual',
+  Extern = 'Extern',
   Extends = 'Extends',
   False = 'False',
   Fn = 'Fn',

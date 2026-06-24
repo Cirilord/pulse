@@ -190,6 +190,74 @@ export class ModuleResolver {
     return exportsMap;
   }
 
+  private createExternModulePath(modulePath: string, importIndex: number): string {
+    return `extern:${modulePath}#${String(importIndex)}`;
+  }
+
+  private createExternModuleRecord(
+    modulePath: string,
+    importDeclaration: ImportDeclarationNode,
+    importIndex: number
+  ): ModuleRecord {
+    if (!this.isCImportSource(importDeclaration.source)) {
+      throw new ModuleResolverError(
+        'Extern imports are only supported for "c:..." sources.',
+        importDeclaration.location
+      );
+    }
+
+    if (importDeclaration.isExported) {
+      throw new ModuleResolverError('Reexporting extern imports is not supported yet.', importDeclaration.location);
+    }
+
+    const syntheticPath: string = this.createExternModulePath(modulePath, importIndex);
+    const declarations: TopLevelDeclarationNode[] = importDeclaration.externDeclarations.map(
+      (declaration: FunctionDeclarationNode | VariableDeclarationNode): TopLevelDeclarationNode => {
+        const internalName: string = `pulse__extern_${this.moduleCounter}__${declaration.name.name}`;
+        this.moduleCounter += 1;
+
+        return {
+          ...declaration,
+          name: this.cloneIdentifier(declaration.name, internalName),
+        };
+      }
+    );
+    const localDeclarations: Map<string, ExportedDeclaration> = new Map<string, ExportedDeclaration>();
+
+    for (let index: number = 0; index < importDeclaration.externDeclarations.length; index += 1) {
+      const originalDeclaration: FunctionDeclarationNode | VariableDeclarationNode =
+        importDeclaration.externDeclarations[index]!;
+      const transformedDeclaration: TopLevelDeclarationNode = declarations[index]!;
+
+      if (localDeclarations.has(originalDeclaration.name.name)) {
+        throw new ModuleResolverError(
+          `Extern declaration "${originalDeclaration.name.name}" is already declared.`,
+          originalDeclaration.name.location
+        );
+      }
+
+      localDeclarations.set(originalDeclaration.name.name, {
+        internalName: transformedDeclaration.name.name,
+        kind: this.getDeclarationKind(transformedDeclaration),
+      });
+    }
+
+    const moduleRecord: ModuleRecord = {
+      declarations,
+      exports: new Map<string, ExportedDeclaration>(localDeclarations),
+      imports: [],
+      isRoot: false,
+      localDeclarations,
+      path: syntheticPath,
+      program: createVirtualProgram(importDeclaration.location),
+      transformedBody: declarations,
+    };
+
+    this.modules.set(syntheticPath, moduleRecord);
+
+    return moduleRecord;
+  }
+
   private createIdentifierExpression(location: TokenLocation, name: string): IdentifierExpressionNode {
     return {
       kind: 'IdentifierExpression',
@@ -251,8 +319,10 @@ export class ModuleResolver {
 
       visitedPaths.add(moduleRecord.path);
 
-      for (const importDeclaration of moduleRecord.imports) {
-        const dependencyPath: string = this.resolveImportSource(moduleRecord.path, importDeclaration);
+      for (const [importIndex, importDeclaration] of moduleRecord.imports.entries()) {
+        const dependencyPath: string = importDeclaration.isExtern
+          ? this.createExternModulePath(moduleRecord.path, importIndex)
+          : this.resolveImportSource(moduleRecord.path, importDeclaration);
         const dependencyModule: ModuleRecord = this.modules.get(dependencyPath)!;
         visitModule(dependencyModule);
       }
@@ -382,7 +452,12 @@ export class ModuleResolver {
 
       this.modules.set(normalizedPath, moduleRecord);
 
-      for (const importDeclaration of imports) {
+      for (const [importIndex, importDeclaration] of imports.entries()) {
+        if (importDeclaration.isExtern) {
+          this.createExternModuleRecord(normalizedPath, importDeclaration, importIndex);
+          continue;
+        }
+
         const dependencyPath: string = this.resolveImportSource(normalizedPath, importDeclaration);
         await this.loadModule(dependencyPath, false);
       }
@@ -472,16 +547,25 @@ export class ModuleResolver {
     const importedBindings: Map<string, ImportedBinding> = new Map<string, ImportedBinding>();
     const namespaceImports: Map<string, ModuleRecord> = new Map<string, ModuleRecord>();
 
-    for (const importDeclaration of moduleRecord.imports) {
+    for (const [importIndex, importDeclaration] of moduleRecord.imports.entries()) {
       if (importDeclaration.isExported) {
         continue;
       }
 
-      if (this.isCImportSource(importDeclaration.source) && importDeclaration.importAll) {
-        throw new ModuleResolverError('C module imports do not support "import *" yet.', importDeclaration.location);
+      if (
+        !importDeclaration.isExtern &&
+        this.isCImportSource(importDeclaration.source) &&
+        importDeclaration.importAll
+      ) {
+        throw new ModuleResolverError(
+          'Cataloged C module imports do not support "import *" yet.',
+          importDeclaration.location
+        );
       }
 
-      const dependencyPath: string = this.resolveImportSource(moduleRecord.path, importDeclaration);
+      const dependencyPath: string = importDeclaration.isExtern
+        ? this.createExternModulePath(moduleRecord.path, importIndex)
+        : this.resolveImportSource(moduleRecord.path, importDeclaration);
       const dependencyModule: ModuleRecord | undefined = this.modules.get(dependencyPath);
 
       if (dependencyModule === undefined) {
@@ -960,7 +1044,7 @@ export class ModuleResolver {
 
     return {
       ...declaration,
-      initializer: this.transformExpression(declaration.initializer, context),
+      initializer: declaration.initializer === null ? null : this.transformExpression(declaration.initializer, context),
       name: isTopLevel ? this.renameTopLevelIdentifier(declaration.name, context) : declaration.name,
       type: this.transformTypeNode(declaration.type, context),
     };
